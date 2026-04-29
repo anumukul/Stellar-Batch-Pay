@@ -10,7 +10,8 @@ import {
   BarChart3, 
   Settings, 
   FileText, 
-  MoreVertical 
+  MoreVertical,
+  BookOpen 
 } from "lucide-react"
 
 import {
@@ -46,6 +47,11 @@ const navItems = [
     title: "Analytics",
     url: "/dashboard/analytics",
     icon: BarChart3,
+  },
+  {
+    title: "Address Book",
+    url: "/dashboard/address-book",
+    icon: BookOpen,
   },
   {
     title: "Settings",

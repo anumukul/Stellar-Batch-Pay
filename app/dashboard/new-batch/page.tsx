@@ -10,8 +10,13 @@ import { CsvValidationErrors } from "@/components/csv-validation-errors";
 import { JobProgress } from "@/components/job-progress";
 import { useWallet } from "@/contexts/WalletContext";
 import { parsePaymentFile, getBatchSummary } from "@/lib/stellar";
-import type { ParsedPaymentFile, BatchResult, JobStatus } from "@/lib/stellar/types";
-import { Send, Info, Lightbulb, Check, AlertCircle, BookOpen } from "lucide-react";
+import type { ParsedPaymentFile, BatchResult, JobStatus, PaymentInstruction } from "@/lib/stellar/types";
+import { Send, Info, Lightbulb, Check, AlertCircle, BookOpen, UserPlus, FileUp } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ManualBatchEntry } from "@/components/dashboard/ManualBatchEntry";
+import { analyzeParsedPayments } from "@/lib/stellar/parser";
+import { BatchReview } from "@/components/dashboard/BatchReview";
+import { CheckCircle2 } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 
@@ -35,6 +40,8 @@ export default function NewBatchPaymentPage() {
   const [jobStatus, setJobStatus] = useState<JobStatus>("queued");
   const [completedBatches, setCompletedBatches] = useState(0);
   const [totalBatches, setTotalBatches] = useState(0);
+  const [manualPayments, setManualPayments] = useState<PaymentInstruction[]>([]);
+  const [entryMode, setEntryMode] = useState<"upload" | "manual">("upload");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopPolling = useCallback(() => {
@@ -149,6 +156,23 @@ export default function NewBatchPaymentPage() {
     }
   };
 
+  const handleManualContinue = () => {
+    if (manualPayments.length === 0) {
+      toast.error("Please add at least one recipient");
+      return;
+    }
+
+    const parsed = analyzeParsedPayments(manualPayments);
+    setValidationResult(parsed);
+    setValidationError("");
+
+    const batchSummary = getBatchSummary(manualPayments);
+    setSummary(batchSummary);
+
+    toast.success("Manual batch validated successfully");
+    setStep(2);
+  };
+
   const estimatedFees = summary ? (summary.validCount * 0.0001).toFixed(4) : "0.0000";
 
   return (
@@ -211,43 +235,78 @@ export default function NewBatchPaymentPage() {
         </div>
       </div>
 
-      {/* Step 1: Upload */}
+      {/* Step 1: Entry */}
       {step === 1 && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
           <div className="lg:col-span-2 space-y-6">
-            <Card className="bg-slate-900/50 border-slate-800">
-              <CardHeader>
-                <CardTitle className="text-xl text-white">Upload Payment File</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <FileUpload onFileSelect={handleFileSelect} />
-                {file && (
-                  <div className="mt-4 text-sm text-slate-400">
-                    Selected:
-                    <span className="text-white font-medium"> {file.name}</span>
-                    {fileFormat && (
-                      <span className="ml-2 text-emerald-500">
-                        ({fileFormat.toUpperCase()})
-                      </span>
+            <Tabs defaultValue="upload" onValueChange={(v) => setEntryMode(v as any)}>
+              <TabsList className="bg-slate-900 border-slate-800 mb-4 p-1">
+                <TabsTrigger value="upload" className="data-[state=active]:bg-emerald-500 data-[state=active]:text-white">
+                  <FileUp className="w-4 h-4 mr-2" />
+                  File Upload
+                </TabsTrigger>
+                <TabsTrigger value="manual" className="data-[state=active]:bg-emerald-500 data-[state=active]:text-white">
+                  <UserPlus className="w-4 h-4 mr-2" />
+                  Manual Entry
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="upload">
+                <Card className="bg-slate-900/50 border-slate-800">
+                  <CardHeader>
+                    <CardTitle className="text-xl text-white">Upload Payment File</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <FileUpload onFileSelect={handleFileSelect} />
+                    {file && (
+                      <div className="mt-4 text-sm text-slate-400">
+                        Selected:
+                        <span className="text-white font-medium"> {file.name}</span>
+                        {fileFormat && (
+                          <span className="ml-2 text-emerald-500">
+                            ({fileFormat.toUpperCase()})
+                          </span>
+                        )}
+                      </div>
                     )}
-                  </div>
-                )}
-                {validationError && (
-                  <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
-                    {validationError}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-            <div className="flex justify-end pt-4">
-              <Button
-                onClick={() => setStep(2)}
-                disabled={!file || !summary}
-                className="bg-emerald-500 hover:bg-emerald-600 text-white w-full sm:w-auto px-8"
-              >
-                Continue to Validation
-              </Button>
-            </div>
+                    {validationError && (
+                      <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
+                        {validationError}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+                <div className="flex justify-end pt-4">
+                  <Button
+                    onClick={() => setStep(2)}
+                    disabled={!file || !summary}
+                    className="bg-emerald-500 hover:bg-emerald-600 text-white w-full sm:w-auto px-8"
+                  >
+                    Continue to Validation
+                  </Button>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="manual">
+                <Card className="bg-slate-900/50 border-slate-800">
+                  <CardHeader>
+                    <CardTitle className="text-xl text-white">Manual Recipient Entry</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <ManualBatchEntry onPaymentsChange={setManualPayments} />
+                  </CardContent>
+                </Card>
+                <div className="flex justify-end pt-4">
+                  <Button
+                    onClick={handleManualContinue}
+                    disabled={manualPayments.length === 0}
+                    className="bg-emerald-500 hover:bg-emerald-600 text-white w-full sm:w-auto px-8"
+                  >
+                    Continue to Validation
+                  </Button>
+                </div>
+              </TabsContent>
+            </Tabs>
           </div>
           {/* Tips */}
           <div className="space-y-6">
@@ -279,7 +338,82 @@ export default function NewBatchPaymentPage() {
             </Card>
           </div>
         </div>
-        )}
+      )}
+
+      {/* Step 2: Validate */}
+      {step === 2 && summary && validationResult && (
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2">
+              <Card className="bg-slate-900/50 border-slate-800">
+                <CardHeader>
+                  <CardTitle className="text-xl text-white">Validation Results</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center justify-between p-4 bg-slate-950 border border-slate-800 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-500">
+                        <Check className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-medium text-white">Valid Recipients</div>
+                        <div className="text-2xl font-bold text-emerald-500">{summary.validCount}</div>
+                      </div>
+                    </div>
+                    {summary.invalidCount > 0 && (
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 rounded-full bg-red-500/10 flex items-center justify-center text-red-500">
+                          <AlertCircle className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <div className="text-sm font-medium text-white">Invalid Rows</div>
+                          <div className="text-2xl font-bold text-red-500">{summary.invalidCount}</div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="p-4 bg-slate-950 border border-slate-800 rounded-lg">
+                      <div className="text-xs text-slate-500 uppercase font-bold mb-1">Total Amount</div>
+                      <div className="text-xl font-bold text-white">{summary.totalAmount} XLM</div>
+                    </div>
+                    <div className="p-4 bg-slate-950 border border-slate-800 rounded-lg">
+                      <div className="text-xs text-slate-500 uppercase font-bold mb-1">Est. Fees</div>
+                      <div className="text-xl font-bold text-white">{estimatedFees} XLM</div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+            <div className="space-y-4">
+              <Card className="bg-slate-900/50 border-slate-800">
+                <CardHeader>
+                  <CardTitle className="text-lg text-white">Continue</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="text-sm text-slate-400">
+                    Review and confirm your batch payment before submitting to the network.
+                  </p>
+                  <Button 
+                    className="w-full bg-emerald-500 hover:bg-emerald-600 text-white"
+                    onClick={() => setStep(3)}
+                    disabled={summary.validCount === 0}
+                  >
+                    Review Batch
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+
+          {validationResult.invalidCount > 0 && (
+            <CsvValidationErrors validationResult={validationResult} maxVisibleErrors={5} />
+          )}
+
+          <BatchDryRun result={validationResult} />
+        </div>
+      )}
 
       {/* Step 3: Review */}
       {step === 3 && summary && validationResult && (
@@ -323,14 +457,6 @@ export default function NewBatchPaymentPage() {
         </div>
       )}
 
-          {validationResult.invalidCount > 0 && (
-            <CsvValidationErrors validationResult={validationResult} maxVisibleErrors={5} />
-          )}
-
-          <BatchDryRun result={validationResult} />
-        </div>
-      )}
-
       {/* Processing progress — shown while batch job is running */}
       {isSubmitting && jobId && (
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -363,10 +489,10 @@ export default function NewBatchPaymentPage() {
                 <span>Your batch has been submitted successfully.</span>
               </div>
               <div className="text-sm text-slate-400">
-                Job ID: <span className="font-mono text-white">{result.jobId}</span>
+                Batch ID: <span className="font-mono text-white">{result.batchId}</span>
               </div>
               <div className="text-sm text-slate-400">
-                Total Payments: {result.totalPayments}
+                Total Payments: {result.totalRecipients}
               </div>
               <div className="pt-4">
                 <Button
