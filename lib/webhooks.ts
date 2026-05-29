@@ -8,6 +8,48 @@ export interface WebhookRegistration {
   secret: string;
 }
 
+/** Safe public view of a registration — never exposes the full secret. */
+export interface WebhookRegistrationRedacted {
+  id: string;
+  url: string;
+  events: string[];
+  createdAt: string;
+  /** First 8 chars of the HMAC secret for display/debug only. */
+  secretPrefix: string;
+}
+
+// RFC1918 + localhost CIDR patterns that must not receive server-side POSTs.
+const PRIVATE_HOSTNAME_RE =
+  /^(localhost|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+)$/i;
+
+/**
+ * Validate that a webhook target URL is safe for server-side delivery.
+ *
+ * Rules:
+ *  - Must use HTTPS (not HTTP).
+ *  - Hostname must not resolve to RFC1918 / localhost addresses.
+ *
+ * Returns `null` on success or an error string on failure.
+ */
+export function validateWebhookUrl(rawUrl: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return "URL is invalid.";
+  }
+
+  if (parsed.protocol !== "https:") {
+    return "Webhook URL must use HTTPS.";
+  }
+
+  if (PRIVATE_HOSTNAME_RE.test(parsed.hostname)) {
+    return "Webhook URL must not target private/local addresses.";
+  }
+
+  return null;
+}
+
 // In-memory store for demonstration. In production, this would be a database.
 let webhooks: WebhookRegistration[] = [];
 
@@ -38,6 +80,17 @@ export function unregisterWebhook(id: string): boolean {
 
 export function getWebhooks(): WebhookRegistration[] {
   return [...webhooks];
+}
+
+/** Returns webhook list with secrets stripped to a short prefix. */
+export function getWebhooksRedacted(): WebhookRegistrationRedacted[] {
+  return webhooks.map(({ id, url, events, createdAt, secret }) => ({
+    id,
+    url,
+    events,
+    createdAt,
+    secretPrefix: secret.slice(0, 8),
+  }));
 }
 
 export async function triggerWebhooks(eventName: string, payload: any) {

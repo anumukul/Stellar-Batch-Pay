@@ -15,6 +15,7 @@ import {
   type ClaimExportRow,
 } from "@/lib/dashboard/history-export";
 import { downloadReceipt, downloadReceiptCsv } from "@/lib/receipt-generator";
+import type { BatchResult } from "@/lib/stellar/types";
 import { escapeHtml } from "@/lib/utils";
 
 function downloadCsv(filename: string, csv: string) {
