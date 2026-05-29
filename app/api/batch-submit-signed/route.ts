@@ -14,6 +14,11 @@ import { TransactionBuilder, Horizon, Networks } from "stellar-sdk";
 import { safeJsonResponse } from "@/lib/safe-json";
 import { applyRateLimit, setRateLimitHeaders } from "@/lib/api-rate-limit";
 import { horizonUrl } from "@/lib/stellar/network-config";
+import {
+    classifySubmitError,
+    isBadSequenceError,
+    isInsufficientFeeError,
+} from "@/lib/stellar/submit-errors";
 
 interface RequestBody {
     signedXdr: string;
@@ -33,17 +38,6 @@ async function getFeeStats(server: Horizon.Server): Promise<FeeStats> {
         console.error("Failed to fetch fee stats:", error);
         return {};
     }
-}
-
-function isInsufficientFeeError(error: unknown): boolean {
-    if (!error || typeof error !== "object") return false;
-    const horizonError = error as any;
-
-    const resultCodes = horizonError.response?.data?.extras?.result_codes;
-    if (!resultCodes) return false;
-
-    const txResult = resultCodes.transaction;
-    return txResult === "tx_insufficient_fee" || txResult === "tx_bad_seq";
 }
 
 export async function POST(request: NextRequest) {
@@ -94,6 +88,23 @@ export async function POST(request: NextRequest) {
                 ledger: result.ledger,
             }), rate);
         } catch (submissionError: unknown) {
+            // A stale/duplicate sequence number is NOT a fee problem: bumping
+            // the fee or resubmitting the same signed XDR can't fix it. Surface
+            // a structured "rebuild" action instead of fee guidance. (#330)
+            if (isBadSequenceError(submissionError)) {
+                const classified = classifySubmitError(submissionError);
+                return setRateLimitHeaders(safeJsonResponse(
+                    {
+                        success: false,
+                        error: classified.message,
+                        code: classified.code,
+                        action: classified.action,
+                        resultCodes: classified.resultCodes,
+                    },
+                    { status: 400 },
+                ), rate);
+            }
+
             // Check if this is a low-fee error and provide fee guidance
             if (isInsufficientFeeError(submissionError)) {
                 const feeStats = await getFeeStats(server);
@@ -105,6 +116,7 @@ export async function POST(request: NextRequest) {
                         success: false,
                         error: "Transaction fees are insufficient for current network conditions",
                         code: "insufficient_fee",
+                        action: "increase_fee",
                         currentNetworkFee: currentBaseFee,
                         estimatedRequiredFee: estimatedFee,
                         guidance: `Network base fee is ${currentBaseFee} stroops. Consider retrying with a fee of at least ${estimatedFee} stroops.`,
