@@ -306,7 +306,7 @@ impl BatchVestingContract {
             let count = old_vestings.len();
             for i in 0..count {
                 let legacy_vesting = old_vestings.get(i).unwrap();
-                
+
                 let batch_id = Self::get_next_batch_id(env);
                 let batch_info = BatchInfo {
                     sender: legacy_vesting.sender.clone(),
@@ -324,7 +324,7 @@ impl BatchVestingContract {
                     cliff_time: legacy_vesting.start_time, // Legacy has no cliff
                     vesting_step: 0,
                     sender: legacy_vesting.sender.clone(),
-                    batch_id: 0, // Legacy data has no batch_id
+                    batch_id, // #328: Use the newly allocated batch_id
                     token: legacy_vesting.token.clone(),
                     memo: String::from_str(env, ""),
                 };
@@ -673,14 +673,9 @@ impl BatchVestingContract {
                     .fee_per_recipient
                     .checked_mul(n)
                     .unwrap_or_else(|| soroban_sdk::panic_with_error!(&env, VestingError::Overflow));
-                // #302: Validate that the fee token matches the configured fee_asset
-                // This prevents accidental charging of fees in the wrong asset when
-                // a batch contains mixed token types.
-                let first_token = tokens.get(0).unwrap();
-                if first_token != fee_cfg.fee_asset {
-                    soroban_sdk::panic_with_error!(&env, VestingError::FeeMismatch);
-                }
-                // We transfer from sender → treasury using the fee_asset.
+                // #331: Always transfer fees in fee_asset regardless of batch token composition.
+                // Multi-token batches may have different assets; fees are always collected
+                // in the configured fee_asset (typically native XLM), not tokens[0].
                 let fee_token_client = token::Client::new(&env, &fee_cfg.fee_asset);
                 fee_token_client.transfer(&sender, &fee_cfg.treasury, &total_fee);
 
