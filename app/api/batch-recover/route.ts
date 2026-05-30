@@ -9,7 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { loadBatch, getPendingTransactions } from "@/lib/batch-persistence";
+import { getJob } from "@/lib/job-store";
 import { safeJsonResponse } from "@/lib/safe-json";
 
 export async function GET(request: NextRequest) {
@@ -24,44 +24,42 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Load the batch from IndexedDB (stored client-side during submission)
-    const batch = await loadBatch(jobId);
+    const job = getJob(jobId);
 
-    if (!batch) {
+    if (!job || !job.result) {
       return safeJsonResponse(
         {
-          error: "Batch not found",
+          error: "Batch not found or not completed yet",
           jobId,
         },
         { status: 404 },
       );
     }
 
-    // Identify pending/failed transactions that need retry
-    const pendingTransactions = getPendingTransactions(batch);
-    const confirmedTransactions = batch.transactions.filter(
-      (t) => t.status === "confirmed",
+    const failedTransactions = job.result.results.filter((t) => t.status === "failed");
+    const successfulTransactions = job.result.results.filter(
+      (t) => t.status === "success",
     );
 
     return safeJsonResponse({
       success: true,
       batch: {
-        jobId: batch.jobId,
-        network: batch.network,
-        createdAt: batch.createdAt,
-        totalPayments: batch.totalPayments,
+        jobId: job.jobId,
+        network: job.network,
+        createdAt: job.createdAt,
+        totalPayments: job.result.results.length,
       },
       progress: {
-        total: batch.transactions.length,
-        confirmed: confirmedTransactions.length,
-        pending: pendingTransactions.length,
+        total: job.result.results.length,
+        successful: successfulTransactions.length,
+        failed: failedTransactions.length,
         percentComplete: Math.round(
-          (confirmedTransactions.length / batch.transactions.length) * 100,
+          (successfulTransactions.length / job.result.results.length) * 100,
         ),
       },
-      confirmedTransactions,
-      pendingTransactions,
-      ready: pendingTransactions.length > 0,
+      successfulTransactions,
+      failedTransactions,
+      ready: failedTransactions.length > 0,
     });
   } catch (error: unknown) {
     console.error("Batch recovery error:", error);

@@ -1,10 +1,17 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, AlertCircle, AlertTriangle, Info, Wallet, ShieldAlert } from "lucide-react";
+import {
+  CheckCircle2,
+  AlertCircle,
+  AlertTriangle,
+  Info,
+  Wallet,
+  ShieldAlert,
+} from "lucide-react";
 import { useWallet } from "@/contexts/WalletContext";
 import { useBalances } from "@/hooks/use-balances";
 import { useTrustlines } from "@/hooks/use-trustlines";
@@ -35,25 +42,26 @@ export function BatchReview({
   const { balances, loading: balancesLoading } = useBalances();
   const [selectedAsset, setSelectedAsset] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Determine unique assets in payments
   const uniqueAssets = useMemo(() => {
-    const assets = new Set(payments.map(p => p.asset));
+    const assets = new Set(payments.map((p) => p.asset));
     return Array.from(assets).sort();
   }, [payments]);
 
   // For trustline check, we need to check each recipient for each asset.
   // We'll focus on the selected asset (or first asset) for trustline warnings.
-  const targetAsset = selectedAsset || uniqueAssets[0] || '';
-  const assetParts = targetAsset.split(':');
+  const targetAsset = selectedAsset || uniqueAssets[0] || "";
+  const assetParts = targetAsset.split(":");
   const assetCode = assetParts[0];
   const assetIssuer = assetParts.length > 1 ? assetParts[1] : undefined;
 
   // Get unique recipient addresses for the selected asset
   const recipientAddresses = useMemo(() => {
     const addresses = payments
-      .filter(p => p.asset === targetAsset)
-      .map(p => p.address);
+      .filter((p) => p.asset === targetAsset)
+      .map((p) => p.address);
     return Array.from(new Set(addresses));
   }, [payments, targetAsset]);
 
@@ -67,42 +75,58 @@ export function BatchReview({
   // Map trustline results for quick lookup
   const trustlineMap = useMemo(() => {
     const map = new Map<string, boolean>();
-    trustlineResults.forEach(r => map.set(r.address, r.hasTrustline));
+    trustlineResults.forEach((r) => map.set(r.address, r.hasTrustline));
     return map;
   }, [trustlineResults]);
 
   // Identify payments missing trustlines (and not already skipped/converted)
   const missingTrustlinePayments = useMemo(() => {
     return payments.map((payment, index) => {
-      if (skippedIndices.includes(index) || convertedIndices.includes(index)) return false;
+      if (skippedIndices.includes(index) || convertedIndices.includes(index))
+        return false;
       if (payment.asset !== targetAsset) return false;
       return !trustlineMap.get(payment.address);
     });
   }, [payments, targetAsset, trustlineMap, skippedIndices, convertedIndices]);
 
   // Aggregate balances by asset
-  const aggregatedBalances = useMemo(() => aggregatePaymentsByAsset(payments), [payments]);
+  const aggregatedBalances = useMemo(
+    () => aggregatePaymentsByAsset(payments),
+    [payments],
+  );
 
   // Validate batch submission
-  const missingTrustlineAddresses = useMemo(() =>
-    payments
-      .filter((p, idx) => !skippedIndices.includes(idx) && !convertedIndices.includes(idx) && !trustlineMap.get(p.address))
-      .map(p => p.address),
-    [payments, skippedIndices, convertedIndices, trustlineMap]
+  const missingTrustlineAddresses = useMemo(
+    () =>
+      payments
+        .filter(
+          (p, idx) =>
+            !skippedIndices.includes(idx) &&
+            !convertedIndices.includes(idx) &&
+            !trustlineMap.get(p.address),
+        )
+        .map((p) => p.address),
+    [payments, skippedIndices, convertedIndices, trustlineMap],
   );
 
   const validation = validateBatchSubmission(
-    payments.filter((_, idx) => !skippedIndices.includes(idx) && !convertedIndices.includes(idx)),
+    payments.filter(
+      (_, idx) =>
+        !skippedIndices.includes(idx) && !convertedIndices.includes(idx),
+    ),
     balances,
     missingTrustlineAddresses,
-    network
+    network,
   );
 
   const handleSubmit = async () => {
     if (!publicKey) {
       return;
     }
-    const filteredPayments = payments.filter((_, idx) => !skippedIndices.includes(idx));
+    const filteredPayments = payments.filter(
+      (_, idx) =>
+        !skippedIndices.includes(idx) && !convertedIndices.includes(idx),
+    );
     setIsSubmitting(true);
     try {
       await onSubmit(filteredPayments);
@@ -111,11 +135,26 @@ export function BatchReview({
     }
   };
 
-  // Refresh trustlines when target asset changes
+  // Debounced trustline refetch (300ms) when recipient list or asset changes
   useEffect(() => {
-    if (recipientAddresses.length > 0) {
-      refetchTrustlines(recipientAddresses);
+    // Clear existing timer
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
     }
+
+    // Set new debounced timer
+    if (recipientAddresses.length > 0) {
+      debounceTimerRef.current = setTimeout(() => {
+        refetchTrustlines(recipientAddresses);
+      }, 300);
+    }
+
+    // Cleanup on unmount
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
   }, [targetAsset, recipientAddresses, refetchTrustlines]);
 
   if (!publicKey) {
@@ -157,7 +196,9 @@ export function BatchReview({
                     {bal.assetCode}
                     {bal.assetIssuer && `:${bal.assetIssuer.slice(0, 4)}...`}
                   </div>
-                  <div className="text-lg font-bold text-white">{bal.balance}</div>
+                  <div className="text-lg font-bold text-white">
+                    {bal.balance}
+                  </div>
                 </div>
               ))}
             </div>
@@ -176,7 +217,7 @@ export function BatchReview({
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap gap-2">
-              {uniqueAssets.map(asset => (
+              {uniqueAssets.map((asset) => (
                 <Badge
                   key={asset}
                   variant={targetAsset === asset ? "default" : "outline"}
@@ -187,26 +228,37 @@ export function BatchReview({
                 </Badge>
               ))}
             </div>
-            {trustlineLoading && <div className="text-slate-400">Checking trustlines...</div>}
-            {trustlineError && <div className="text-red-400">{trustlineError}</div>}
-            {!trustlineLoading && !trustlineError && recipientAddresses.length > 0 && (
-              <div className="space-y-2">
-                <div className="text-sm text-slate-300">
-                  Missing trustlines for {targetAsset}: {missingTrustlinePayments.filter(Boolean).length} recipients
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {missingTrustlinePayments.map((isMissing, idx) => {
-                    if (!isMissing) return null;
-                    const payment = payments[idx];
-                    return (
-                      <Badge key={idx} variant="destructive" className="text-xs">
-                        {payment.address.slice(0, 8)}... (index {idx})
-                      </Badge>
-                    );
-                  })}
-                </div>
-              </div>
+            {trustlineLoading && (
+              <div className="text-slate-400">Checking trustlines...</div>
             )}
+            {trustlineError && (
+              <div className="text-red-400">{trustlineError}</div>
+            )}
+            {!trustlineLoading &&
+              !trustlineError &&
+              recipientAddresses.length > 0 && (
+                <div className="space-y-2">
+                  <div className="text-sm text-slate-300">
+                    Missing trustlines for {targetAsset}:{" "}
+                    {missingTrustlinePayments.filter(Boolean).length} recipients
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {missingTrustlinePayments.map((isMissing, idx) => {
+                      if (!isMissing) return null;
+                      const payment = payments[idx];
+                      return (
+                        <Badge
+                          key={idx}
+                          variant="destructive"
+                          className="text-xs"
+                        >
+                          {payment.address.slice(0, 8)}... (index {idx})
+                        </Badge>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
           </CardContent>
         </Card>
       )}
@@ -214,17 +266,29 @@ export function BatchReview({
       {/* Payment Table with Actions */}
       <Card className="bg-slate-900/50 border-slate-800 overflow-hidden">
         <CardHeader className="border-b border-slate-800">
-          <CardTitle className="text-lg text-white">Payments ({payments.length})</CardTitle>
+          <CardTitle className="text-lg text-white">
+            Payments ({payments.length})
+          </CardTitle>
         </CardHeader>
         <div className="max-h-[500px] overflow-auto">
           <table className="w-full">
             <thead className="bg-slate-900 sticky top-0 z-10">
               <tr className="border-slate-800 hover:bg-transparent">
-                <th className="w-[80px] text-left p-3 text-sm text-slate-400 font-medium">Index</th>
-                <th className="text-left p-3 text-sm text-slate-400 font-medium">Recipient</th>
-                <th className="text-left p-3 text-sm text-slate-400 font-medium">Amount</th>
-                <th className="text-left p-3 text-sm text-slate-400 font-medium">Asset</th>
-                <th className="text-left p-3 text-sm text-slate-400 font-medium">Actions</th>
+                <th className="w-20 text-left p-3 text-sm text-slate-400 font-medium">
+                  Index
+                </th>
+                <th className="text-left p-3 text-sm text-slate-400 font-medium">
+                  Recipient
+                </th>
+                <th className="text-left p-3 text-sm text-slate-400 font-medium">
+                  Amount
+                </th>
+                <th className="text-left p-3 text-sm text-slate-400 font-medium">
+                  Asset
+                </th>
+                <th className="text-left p-3 text-sm text-slate-400 font-medium">
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -233,13 +297,20 @@ export function BatchReview({
                   key={idx}
                   className="border-slate-800/50 border-b hover:bg-slate-800/20"
                 >
-                  <td className="p-3 font-mono text-sm text-slate-500">{idx}</td>
+                  <td className="p-3 font-mono text-sm text-slate-500">
+                    {idx}
+                  </td>
                   <td className="p-3 font-mono text-sm text-white truncate max-w-[200px]">
                     {payment.address}
                   </td>
-                  <td className="p-3 font-bold text-sm text-white">{payment.amount}</td>
+                  <td className="p-3 font-bold text-sm text-white">
+                    {payment.amount}
+                  </td>
                   <td className="p-3">
-                    <Badge variant="outline" className="bg-slate-800 border-slate-700 text-slate-300">
+                    <Badge
+                      variant="outline"
+                      className="bg-slate-800 border-slate-700 text-slate-300"
+                    >
                       {payment.asset}
                     </Badge>
                   </td>
@@ -247,17 +318,25 @@ export function BatchReview({
                     <div className="flex gap-2">
                       <Button
                         size="sm"
-                        variant={skippedIndices.includes(idx) ? "default" : "outline"}
+                        variant={
+                          skippedIndices.includes(idx) ? "default" : "outline"
+                        }
                         onClick={() => onSkipToggle(idx)}
                       >
-                        {skippedIndices.includes(idx) ? 'Skipped' : 'Skip'}
+                        {skippedIndices.includes(idx) ? "Skipped" : "Skip"}
                       </Button>
                       <Button
                         size="sm"
-                        variant={convertedIndices.includes(idx) ? "default" : "secondary"}
+                        variant={
+                          convertedIndices.includes(idx)
+                            ? "default"
+                            : "secondary"
+                        }
                         onClick={() => onConvertToggle(idx)}
                       >
-                        {convertedIndices.includes(idx) ? 'Converted' : 'Claimable'}
+                        {convertedIndices.includes(idx)
+                          ? "Converted"
+                          : "Claimable"}
                       </Button>
                     </div>
                   </td>
@@ -310,7 +389,7 @@ export function BatchReview({
           disabled={!validation.valid || isSubmitting}
           onClick={handleSubmit}
         >
-          {isSubmitting ? 'Submitting...' : 'Submit Batch'}
+          {isSubmitting ? "Submitting..." : "Submit Batch"}
         </Button>
       </div>
     </div>

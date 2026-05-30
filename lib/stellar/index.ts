@@ -10,3 +10,4 @@ export { fetchFeeStats, getRecommendedFee, getFeeForOperations, clearFeeCache } 
 export type { FeeStats, FeeOptions } from './fee-service';
 export type { PaymentInstruction, Asset, StellarTransaction, PaymentResult, BatchResult, BatchConfig, PaymentValidationRow, ParsedPaymentFile } from './types';
 export { formatAmount } from './utils';
+export { buildDepositTransaction, buildClaimTransaction, buildRevokeTransaction, buildBumpInstanceTtlTransaction, buildBumpVestingTtlTransaction } from './vesting';

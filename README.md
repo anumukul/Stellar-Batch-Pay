@@ -346,7 +346,7 @@ For vesting workflows, you should also track contract-level events/state such as
 ## Common Questions
 
 **Q: What if one payment fails?**
-A: The system tries to include failed payments in the next batch automatically. You'll see in the results which ones failed and why.
+A: Failed payments are reported individually in the batch result. You can review the errors and retry only the failed entries without resubmitting the full batch.
 
 **Q: Can I cancel payments?**
 A: No, once submitted to the blockchain, payments can't be undone. This is why testnet exists — test first!

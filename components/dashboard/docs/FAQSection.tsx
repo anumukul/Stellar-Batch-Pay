@@ -25,7 +25,7 @@ const FAQ_DATA: FAQItem[] = [
     id: 3,
     question: "How are failed payments handled?",
     answer:
-      "If a batch transaction fails, the entire transaction is rolled back atomically — no partial payments are made. This ensures consistency across all recipients. Common failure reasons include insufficient XLM balance, invalid destination addresses, or accounts that haven't been activated. Failed transactions are flagged in your dashboard with detailed error codes so you can retry or correct individual entries.",
+      "If a batch transaction fails, the entire transaction is rolled back atomically — no partial payments are made. Failed payments are flagged in your dashboard with detailed error codes, and you can retry only the failed entries after review. Common failure reasons include insufficient XLM balance, invalid destination addresses, or accounts that haven't been activated.",
   },
   {
     id: 4,

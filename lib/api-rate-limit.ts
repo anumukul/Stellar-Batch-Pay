@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import Database from "better-sqlite3";
+import path from "path";
+import crypto from "crypto";
 
 type Tier = "free" | "pro" | "enterprise";
 type EndpointKey = "batch-build" | "batch-submit" | "batch-submit-signed" | "webhook-register";
@@ -10,20 +13,47 @@ type EndpointLimit = {
   windowMs: number;
 };
 
-type RateBucket = {
+type RateBucketRow = {
+  key: string;
+  tier: Tier;
+  endpoint: EndpointKey;
   remaining: number;
+  limit: number;
   resetAt: number;
+  windowMs: number;
+  updatedAt: string;
 };
 
-// #271: env-tunable defaults. The shipping numbers below are kept as
-// the deployment baseline; each tier of each endpoint can be raised
-// or lowered without a code change via the matching env var:
-//
-//   RATE_LIMIT_<ENDPOINT>_<TIER>=<requests-per-window>
-//   RATE_LIMIT_<ENDPOINT>_WINDOW_MS=<milliseconds>
-//
-// e.g. `RATE_LIMIT_BATCH_BUILD_PRO=50`. Missing / non-numeric env
-// values fall back to the shipped defaults so dev keeps working.
+const RATE_LIMIT_DB_PATH = process.env.RATE_LIMIT_DB_PATH ?? path.join(process.cwd(), "data", "rate-limit.db");
+
+let _db: Database.Database | null = null;
+
+function getDb(): Database.Database {
+  if (_db) return _db;
+
+  const { mkdirSync } = require("fs") as typeof import("fs");
+  mkdirSync(path.dirname(RATE_LIMIT_DB_PATH), { recursive: true });
+
+  _db = new Database(RATE_LIMIT_DB_PATH);
+  _db.pragma("journal_mode = WAL");
+  _db.pragma("foreign_keys = ON");
+
+  _db.exec(`
+    CREATE TABLE IF NOT EXISTS rate_buckets (
+      key TEXT PRIMARY KEY,
+      tier TEXT NOT NULL,
+      endpoint TEXT NOT NULL,
+      remaining INTEGER NOT NULL,
+      limit INTEGER NOT NULL,
+      resetAt INTEGER NOT NULL,
+      windowMs INTEGER NOT NULL,
+      updatedAt TEXT NOT NULL
+    );
+  `);
+
+  return _db;
+}
+
 function intEnv(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw) return fallback;
@@ -32,14 +62,10 @@ function intEnv(name: string, fallback: number): number {
 }
 
 function envKey(endpoint: EndpointKey): string {
-  // batch-build → BATCH_BUILD
   return endpoint.toUpperCase().replace(/-/g, "_");
 }
 
-function tunedLimit(
-  endpoint: EndpointKey,
-  defaults: EndpointLimit,
-): EndpointLimit {
+function tunedLimit(endpoint: EndpointKey, defaults: EndpointLimit): EndpointLimit {
   const k = envKey(endpoint);
   return {
     free: intEnv(`RATE_LIMIT_${k}_FREE`, defaults.free),
@@ -69,35 +95,76 @@ const endpointLimits: Record<EndpointKey, EndpointLimit> = {
   ),
 };
 
-/**
- * Read-only accessor for the configured limits. Useful for tests +
- * an `/api/health` style endpoint.
- */
+const apiKeyTierMap: Record<string, Tier> = (() => {
+  const raw = process.env.RATE_LIMIT_API_KEY_TIERS;
+  if (!raw) return {};
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return {};
+
+    return Object.entries(parsed).reduce<Record<string, Tier>>((map, [key, value]) => {
+      if (typeof value === "string" && ["free", "pro", "enterprise"].includes(value)) {
+        map[key] = value as Tier;
+      }
+      return map;
+    }, {});
+  } catch {
+    return {};
+  }
+})();
+
 export function getEndpointLimits(): Record<EndpointKey, EndpointLimit> {
   return endpointLimits;
 }
 
-const buckets = new Map<string, RateBucket>();
+function hashIdentifier(value: string): string {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
 
 function resolveTier(request: NextRequest): Tier {
-  const rawTier = (request.headers.get("x-api-tier") || "free").toLowerCase();
-  if (rawTier === "enterprise") return "enterprise";
-  if (rawTier === "pro") return "pro";
+  const auth = request.headers.get("authorization");
+  let keyValue: string | undefined;
+
+  if (auth?.startsWith("Bearer ")) {
+    keyValue = auth.slice(7).trim();
+  }
+
+  const apiKey = request.headers.get("x-api-key");
+  if (!keyValue && apiKey) {
+    keyValue = apiKey.trim();
+  }
+
+  if (keyValue) {
+    if (apiKeyTierMap[keyValue]) {
+      return apiKeyTierMap[keyValue];
+    }
+
+    const hashed = hashIdentifier(keyValue);
+    if (apiKeyTierMap[hashed]) {
+      return apiKeyTierMap[hashed];
+    }
+  }
+
   return "free";
 }
 
 function resolveIdentifier(request: NextRequest): string {
   const auth = request.headers.get("authorization");
-  if (auth && auth.startsWith("Bearer ")) {
-    return `auth:${auth.slice(7, 31)}`;
+  if (auth?.startsWith("Bearer ")) {
+    const token = auth.slice(7).trim();
+    return `auth:${hashIdentifier(token)}`;
   }
+
   const forwarded = request.headers.get("x-forwarded-for");
   if (forwarded) {
     const ip = forwarded.split(",")[0]?.trim();
-    if (ip) return `ip:${ip}`;
+    if (ip) return `ip:${hashIdentifier(ip)}`;
   }
+
   const cfIp = request.headers.get("cf-connecting-ip");
-  if (cfIp) return `ip:${cfIp}`;
+  if (cfIp) return `ip:${hashIdentifier(cfIp)}`;
+
   return "ip:unknown";
 }
 
@@ -112,24 +179,30 @@ export function applyRateLimit(request: NextRequest, endpoint: EndpointKey): {
   const policy = endpointLimits[endpoint];
   const limit = policy[tier];
   const now = Date.now();
-  const key = `${endpoint}:${tier}:${resolveIdentifier(request)}`;
-  const existing = buckets.get(key);
+  const key = `${endpoint}:${resolveIdentifier(request)}`;
 
-  if (!existing || now >= existing.resetAt) {
-    buckets.set(key, {
-      remaining: limit - 1,
-      resetAt: now + policy.windowMs,
-    });
+  const db = getDb();
+  const row = db.prepare("SELECT * FROM rate_buckets WHERE key = ?").get(key) as RateBucketRow | undefined;
+
+  if (!row || now >= row.resetAt) {
+    const resetAt = now + policy.windowMs;
+    const remaining = limit - 1;
+    db.prepare(`
+      INSERT OR REPLACE INTO rate_buckets
+      (key, tier, endpoint, remaining, limit, resetAt, windowMs, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(key, tier, endpoint, remaining, limit, resetAt, policy.windowMs, new Date().toISOString());
+
     return {
       blocked: false,
-      remaining: Math.max(0, limit - 1),
+      remaining: Math.max(0, remaining),
       retryAfterSec: Math.ceil(policy.windowMs / 1000),
       limit,
     };
   }
 
-  if (existing.remaining <= 0) {
-    const retryAfterSec = Math.max(1, Math.ceil((existing.resetAt - now) / 1000));
+  if (row.remaining <= 0) {
+    const retryAfterSec = Math.max(1, Math.ceil((row.resetAt - now) / 1000));
     const response = NextResponse.json(
       { error: "Too Many Requests", detail: "Rate limit exceeded for this endpoint." },
       { status: 429 },
@@ -140,11 +213,15 @@ export function applyRateLimit(request: NextRequest, endpoint: EndpointKey): {
     return { blocked: true, remaining: 0, retryAfterSec, limit, response };
   }
 
-  existing.remaining -= 1;
-  const retryAfterSec = Math.max(1, Math.ceil((existing.resetAt - now) / 1000));
+  const newRemaining = row.remaining - 1;
+  db.prepare(`
+    UPDATE rate_buckets SET remaining = ?, updatedAt = ? WHERE key = ?
+  `).run(newRemaining, new Date().toISOString(), key);
+
+  const retryAfterSec = Math.max(1, Math.ceil((row.resetAt - now) / 1000));
   return {
     blocked: false,
-    remaining: existing.remaining,
+    remaining: newRemaining,
     retryAfterSec,
     limit,
   };

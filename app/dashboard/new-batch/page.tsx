@@ -8,6 +8,7 @@ import { ConnectWalletButton } from "@/components/connect-wallet-button";
 import { BatchDryRun } from "@/components/dashboard/BatchDryRun";
 import { CsvValidationErrors } from "@/components/csv-validation-errors";
 import { JobProgress } from "@/components/job-progress";
+import { ResultsDisplay } from "@/components/results-display";
 import { useWallet } from "@/contexts/WalletContext";
 import { parsePaymentFile, getBatchSummary } from "@/lib/stellar";
 import type { ParsedPaymentFile, BatchResult, JobStatus, PaymentInstruction } from "@/lib/stellar/types";
@@ -121,6 +122,7 @@ export default function NewBatchPaymentPage() {
   const [skippedIndices, setSkippedIndices] = useState<number[]>([]);
   const [convertedIndices, setConvertedIndices] = useState<number[]>([]);
   const { publicKey, signTx } = useWallet();
+  const allowServerSigning = process.env.NEXT_PUBLIC_ALLOW_SERVER_SIGNING === "true";
 
   const handleSkipToggle = (index: number) => {
     setSkippedIndices(prev => {
@@ -146,6 +148,25 @@ export default function NewBatchPaymentPage() {
       }
       return next;
     });
+  };
+
+  const handleRetryFailed = (failedPayments: PaymentInstruction[]) => {
+    const rows = failedPayments.map((instruction, index) => ({
+      rowNumber: index + 1,
+      instruction,
+      valid: true,
+    }));
+
+    setValidationResult({
+      rows,
+      validPayments: failedPayments,
+      invalidCount: 0,
+    });
+    setSummary(getBatchSummary(failedPayments));
+    setSkippedIndices([]);
+    setConvertedIndices([]);
+    setStep(2);
+    toast.success('Loaded failed payments for retry. Review before resubmitting.');
   };
 
   // UX: Warn before closing tab during submission (#287)

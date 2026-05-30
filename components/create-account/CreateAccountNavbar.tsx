@@ -1,9 +1,9 @@
-'use client';
+"use client";
 
-import React, { useState } from 'react';
-import Link from 'next/link';
-import { Button } from '@/components/ui/button';
-import { Layers, Menu, X } from 'lucide-react';
+import React, { useState } from "react";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { Layers, Menu, X } from "lucide-react";
 
 const navLinks = [
   { label: 'Features', href: '/#features' },
@@ -19,7 +19,6 @@ export const CreateAccountNavbar = () => {
     <header className="w-full bg-[#0b1120] border-b border-white/5 sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
-
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2.5 group shrink-0">
             <div className="w-9 h-9 bg-[#00D4AA]/15 rounded-xl flex items-center justify-center border border-[#00D4AA]/30 group-hover:bg-[#00D4AA]/25 transition-all duration-300 shadow-[0_0_12px_rgba(0,212,170,0.15)]">
@@ -37,9 +36,9 @@ export const CreateAccountNavbar = () => {
                 key={label}
                 href={href}
                 className={`text-sm font-medium transition-colors duration-200 ${
-                  label === 'Contact'
-                    ? 'text-[#00D4AA]'
-                    : 'text-gray-400 hover:text-white'
+                  label === "Contact"
+                    ? "text-[#00D4AA]"
+                    : "text-gray-400 hover:text-white"
                 }`}
               >
                 {label}
@@ -84,9 +83,9 @@ export const CreateAccountNavbar = () => {
               href={href}
               onClick={() => setMobileOpen(false)}
               className={`block px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                label === 'Contact'
-                  ? 'text-[#00D4AA]'
-                  : 'text-gray-400 hover:text-white hover:bg-white/5'
+                label === "Contact"
+                  ? "text-[#00D4AA]"
+                  : "text-gray-400 hover:text-white hover:bg-white/5"
               }`}
             >
               {label}

@@ -52,6 +52,43 @@ function assetToTokenAddress(asset: string, network: 'testnet' | 'mainnet'): str
   return asset.split(':')[1]; // Extract issuer from 'CODE:ISSUER'
 }
 
+function amountToScVal(amount: string): xdr.ScVal {
+  const stroops = BigInt(Math.round(parseFloat(amount) * 1e7));
+  return nativeToScVal(stroops, { type: 'i128' });
+}
+
+async function buildSorobanTransaction(
+  contractId: string,
+  operation: ReturnType<Contract['call']>,
+  network: 'testnet' | 'mainnet',
+  publicKey: string,
+): Promise<string> {
+  const networkPassphrase = network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET;
+  const rpcUrl = SOROBAN_RPC_URLS[network];
+
+  const { rpc: SorobanRpc } = await import('stellar-sdk');
+  const server = new SorobanRpc.Server(rpcUrl, { allowHttp: false });
+
+  const sourceAccount = await server.getAccount(publicKey);
+  const account = new Account(sourceAccount.accountId(), sourceAccount.sequenceNumber());
+
+  const tx = new TransactionBuilder(account, {
+    fee: '1000000',
+    networkPassphrase,
+  })
+    .addOperation(operation)
+    .setTimeout(300)
+    .build();
+
+  const simResult = await server.simulateTransaction(tx);
+  if (SorobanRpc.Api.isSimulationError(simResult)) {
+    throw new Error(`Soroban simulation failed: ${simResult.error}`);
+  }
+
+  const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
+  return preparedTx.toEnvelope().toXDR('base64');
+}
+
 /**
  * Build an unsigned Soroban deposit transaction XDR.
  * The returned XDR can be signed by Freighter or any other wallet and submitted via Soroban RPC.
@@ -122,6 +159,48 @@ export async function buildDepositTransaction(
   } finally {
     release();
   }
+}
+
+/**
+ * Build an unsigned transaction to claim from a vesting schedule.
+ */
+export async function buildClaimTransaction(
+  contractId: string,
+  recipient: string,
+  index: number,
+  amount: string,
+  network: 'testnet' | 'mainnet',
+  publicKey: string,
+): Promise<string> {
+  const contract = new Contract(contractId);
+  const operation = contract.call(
+    'claim',
+    new Address(recipient).toScVal(),
+    nativeToScVal(BigInt(index), { type: 'u32' }),
+    amountToScVal(amount),
+  );
+
+  return buildSorobanTransaction(contractId, operation, network, publicKey);
+}
+
+/**
+ * Build an unsigned transaction to revoke a vesting schedule.
+ */
+export async function buildRevokeTransaction(
+  contractId: string,
+  recipient: string,
+  index: number,
+  network: 'testnet' | 'mainnet',
+  publicKey: string,
+): Promise<string> {
+  const contract = new Contract(contractId);
+  const operation = contract.call(
+    'revoke',
+    new Address(recipient).toScVal(),
+    nativeToScVal(BigInt(index), { type: 'u32' }),
+  );
+
+  return buildSorobanTransaction(contractId, operation, network, publicKey);
 }
 
 /**

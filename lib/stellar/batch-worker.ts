@@ -43,31 +43,60 @@ export async function processJobInBackground(
       const allResults: PaymentResult[] = [];
       let successCount = 0;
       let failCount = 0;
+      const paymentsPerBatch = payments.length > 0 ? Math.min(MAX_OPS, payments.length) : 0;
 
       for (let i = 0; i < signedTransactions.length; i++) {
+        const xdr = signedTransactions[i];
+        const batchPayments = paymentsPerBatch
+          ? payments.slice(i * paymentsPerBatch, Math.min((i + 1) * paymentsPerBatch, payments.length))
+          : [];
+
         try {
-          const xdr = signedTransactions[i];
-          // Submit the pre-signed transaction
           const tx = TransactionBuilder.fromXDR(xdr, network === 'testnet' ? 'TESTNET' : 'PUBLIC');
           const result = await server.submitTransaction(tx);
 
-          successCount++;
-          allResults.push({
-            recipient: `tx-${i}`,
-            amount: "0", // Pre-signed txs may contain multiple operations
-            asset: "XLM",
-            status: "success",
-            transactionHash: result.hash,
-          });
+          successCount += batchPayments.length || 1;
+          if (batchPayments.length > 0) {
+            for (const payment of batchPayments) {
+              allResults.push({
+                recipient: payment.address,
+                amount: payment.amount,
+                asset: payment.asset,
+                status: "success",
+                transactionHash: result.hash,
+              });
+            }
+          } else {
+            allResults.push({
+              recipient: `tx-${i}`,
+              amount: "0",
+              asset: "XLM",
+              status: "success",
+              transactionHash: result.hash,
+            });
+          }
         } catch (error) {
-          failCount++;
-          allResults.push({
-            recipient: `tx-${i}`,
-            amount: "0",
-            asset: "XLM",
-            status: "failed",
-            error: error instanceof Error ? error.message : "Unknown error",
-          });
+          if (batchPayments.length > 0) {
+            for (const payment of batchPayments) {
+              allResults.push({
+                recipient: payment.address,
+                amount: payment.amount,
+                asset: payment.asset,
+                status: "failed",
+                error: error instanceof Error ? error.message : "Unknown error",
+              });
+              failCount++;
+            }
+          } else {
+            failCount++;
+            allResults.push({
+              recipient: `tx-${i}`,
+              amount: "0",
+              asset: "XLM",
+              status: "failed",
+              error: error instanceof Error ? error.message : "Unknown error",
+            });
+          }
         }
 
         updateJob(jobId, { completedBatches: i + 1 });
@@ -77,13 +106,18 @@ export async function processJobInBackground(
         status: "completed",
         result: {
           batchId: `batch-${Date.now()}`,
-          totalRecipients: signedTransactions.length,
-          totalAmount: "0",
+          totalRecipients: payments.length > 0 ? payments.length : signedTransactions.length,
+          totalAmount: payments.length > 0
+            ? payments.reduce((sum, p) => sum + parseFloat(p.amount), 0).toString()
+            : "0",
           totalTransactions: signedTransactions.length,
-          results: allResults,
-          summary: { successful: successCount, failed: failCount },
-          timestamp: new Date().toISOString(),
           network,
+          timestamp: new Date().toISOString(),
+          results: allResults,
+          summary: {
+            successful: successCount,
+            failed: failCount,
+          },
         },
       });
       return;

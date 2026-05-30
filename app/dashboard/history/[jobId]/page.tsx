@@ -21,12 +21,14 @@
  */
 
 import { use, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { ArrowLeft, Copy, ExternalLink, Download, FileText, Loader2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
 import {
   buildBatchExportRows,
   toBatchExportCsv,
@@ -79,9 +81,12 @@ export default function BatchDetailPage({
   params: Promise<{ jobId: string }>;
 }) {
   const { jobId } = use(params);
+  const router = useRouter();
   const [data, setData] = useState<JobStatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [retrying, setRetrying] = useState(false);
+  const allowServerSigning = process.env.NEXT_PUBLIC_ALLOW_SERVER_SIGNING === "true";
 
   useEffect(() => {
     let cancelled = false;
@@ -105,6 +110,33 @@ export default function BatchDetailPage({
       cancelled = true;
     };
   }, [jobId]);
+
+  const handleRetry = async () => {
+    if (!data?.summary?.failed) {
+      return;
+    }
+
+    setRetrying(true);
+    try {
+      const res = await fetch("/api/batch-retry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId }),
+      });
+
+      const body = await res.json();
+      if (!res.ok) {
+        throw new Error(body.error || `Retry failed (${res.status})`);
+      }
+
+      toast.success(`Retry job queued (${body.jobId})`);
+      router.push(`/dashboard/history/${body.jobId}`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   const exportRows = data ? buildBatchExportRows(data) : [];
 
@@ -195,6 +227,16 @@ export default function BatchDetailPage({
                 <Download className="h-4 w-4 mr-1.5" />
                 Export CSV
               </Button>
+              {allowServerSigning && data.summary?.failed ? (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleRetry}
+                  disabled={retrying}
+                >
+                  {retrying ? "Retrying…" : `Retry ${data.summary.failed} Failed`}
+                </Button>
+              ) : null}
               <Button
                 variant="outline"
                 size="sm"

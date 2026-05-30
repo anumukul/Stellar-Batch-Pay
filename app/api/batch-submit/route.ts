@@ -102,11 +102,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const allowServerSigning = process.env.ALLOW_SERVER_SIGNING === "true";
+    if (!allowServerSigning) {
+      return NextResponse.json(
+        {
+          error:
+            "Server-side signing is disabled. Use client-side signing with a connected wallet, or enable ALLOW_SERVER_SIGNING=true in server configuration.",
+        },
+        { status: 403 },
+      );
+    }
+
     // Get secret key from environment
     const secretKey = process.env.STELLAR_SECRET_KEY;
     if (!secretKey) {
       return NextResponse.json(
-        { error: "STELLAR_SECRET_KEY is not configured. Please use client-side signing or configure server-side signing." },
+        { error: "STELLAR_SECRET_KEY is not configured. Please configure server-side signing or use client-side signing." },
         { status: 500 },
       );
     }
