@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, test, vi, beforeEach } from 'vitest';
-import { Keypair, xdr, scValToNative } from 'stellar-sdk';
+import { Contract, Keypair, xdr, scValToNative } from 'stellar-sdk';
 import type { PaymentInstruction } from '../lib/stellar/types';
 
 // --- Mock the Soroban RPC surface --------------------------------
@@ -160,5 +160,31 @@ describe('buildDepositTransaction (#364)', () => {
         sender,
       ),
     ).rejects.toBeDefined();
+  });
+});
+
+describe('buildTransferVestingRightsTransaction', () => {
+  test('transfer_vesting_rights passes three contract arguments', async () => {
+    const callSpy = vi.spyOn(Contract.prototype, 'call');
+    const { buildTransferVestingRightsTransaction } = await import('../lib/stellar/vesting');
+
+    const from = Keypair.random().publicKey();
+    const to = Keypair.random().publicKey();
+    const signer = Keypair.random().publicKey();
+
+    await buildTransferVestingRightsTransaction(
+      'CACONTRACTIDADDRESSPLACEHOLDERPLACEHOLDER',
+      from,
+      to,
+      2,
+      'testnet',
+      signer,
+    );
+
+    expect(callSpy).toHaveBeenCalled();
+    const [fn, ...args] = callSpy.mock.calls[0];
+    expect(fn).toBe('transfer_vesting_rights');
+    expect(args).toHaveLength(3);
+    callSpy.mockRestore();
   });
 });

@@ -10,6 +10,11 @@ import {
   nativeToScVal
 } from 'stellar-sdk';
 import { createSecretsProvider } from '../lib/secrets/index';
+import {
+  decodeTopicValue,
+  parseVestingEventRecipient,
+  parseVestingTransferred,
+} from '../lib/stellar/vesting-events';
 
 /**
  * CONFIGURATION
@@ -146,32 +151,50 @@ async function fetchActiveRecipients(): Promise<string[]> {
       }
 
       for (const event of events.events) {
-        if (event.type === "contract" && Array.isArray(event.contract)) {
-          const topics = event.contract;
-          const eventNameTopic = topics[0];
+        if (event.type !== "contract") {
+          continue;
+        }
 
-          // Match vesting-related event names
-          if (eventNameTopic && typeof eventNameTopic === "object") {
-            const eventName = (eventNameTopic as any).sym || String(eventNameTopic);
-            if (
-              eventName.includes("vested") ||
-              eventName.includes("created") ||
-              eventName.includes("revoked")
-            ) {
-              // Extract recipient address from event data
-              const eventData = event.data;
-              if (Array.isArray(eventData) && eventData.length > 0) {
-                const recipientData = eventData[0];
-                if (recipientData && typeof recipientData === "object") {
-                  const recipientAddr = (recipientData as any).address ||
-                    (recipientData as any).recipientAddress ||
-                    String(recipientData);
-                  if (recipientAddr && recipientAddr.startsWith("G")) {
-                    recipients.add(recipientAddr);
-                  }
-                }
-              }
-            }
+        const topics = Array.isArray((event as { topics?: unknown }).topics)
+          ? (event as { topics: unknown[] }).topics
+          : Array.isArray((event as { contract?: unknown }).contract)
+            ? (event as { contract: unknown[] }).contract
+            : null;
+
+        if (!topics) {
+          continue;
+        }
+
+        const eventName = decodeTopicValue(topics[0]);
+        if (!eventName) {
+          continue;
+        }
+
+        const trackedEvents = new Set([
+          "VestingDeposited",
+          "VestingClaimed",
+          "VestingRevoked",
+          "VestingPartiallyRevoked",
+          "VestingTransferred",
+        ]);
+
+        if (!trackedEvents.has(eventName)) {
+          continue;
+        }
+
+        const recipient = parseVestingEventRecipient(eventName, topics);
+        if (recipient && (recipient.startsWith("G") || recipient.startsWith("C"))) {
+          recipients.add(recipient);
+        }
+
+        const payload =
+          (event as { value?: unknown }).value ?? (event as { data?: unknown }).data;
+        if (eventName === "VestingTransferred" && payload) {
+          try {
+            const transfer = parseVestingTransferred(payload);
+            recipients.add(transfer.newAddress);
+          } catch {
+            // skip malformed transfer payloads
           }
         }
       }

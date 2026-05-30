@@ -22,4 +22,28 @@ export type {
   BalanceValidationResult
 } from './types';
 export { formatAmount } from './utils';
-export { buildDepositTransaction, buildClaimTransaction, buildRevokeTransaction, buildBumpInstanceTtlTransaction, buildBumpVestingTtlTransaction } from './vesting';
+export {
+  buildDepositTransaction,
+  buildClaimTransaction,
+  buildRevokeTransaction,
+  buildTransferVestingRightsTransaction,
+  buildBumpInstanceTtlTransaction,
+  buildBumpVestingTtlTransaction,
+} from './vesting';
+export {
+  parseVestingClaimedPayload,
+  parseVestingDeposited,
+  parseVestingRevoked,
+  parseVestingPartiallyRevoked,
+  parseVestingTransferred,
+  parseFeeCollected,
+  parseVestingEventRecipient,
+} from './vesting-events';
+export type {
+  VestingClaimedEventPayload,
+  VestingDepositedEventPayload,
+  VestingRevokedEventPayload,
+  VestingPartiallyRevokedEventPayload,
+  VestingTransferredEventPayload,
+  FeeCollectedEventPayload,
+} from './vesting-events';

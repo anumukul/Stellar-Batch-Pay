@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { motion } from "framer-motion";
+import { MotionSafe } from "@/components/motion-safe";
 import {
   HistoryFilterBar,
   DEFAULT_HISTORY_FILTERS,
@@ -32,7 +32,7 @@ export default function HistoryPage() {
   };
 
   return (
-    <motion.div
+    <MotionSafe
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
@@ -80,6 +80,6 @@ export default function HistoryPage() {
       </Card>
 
       <HistoryExportCenter />
-    </motion.div>
+    </MotionSafe>
   );
 }

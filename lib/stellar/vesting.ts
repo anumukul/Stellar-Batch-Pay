@@ -241,6 +241,33 @@ export async function buildBumpInstanceTtlTransaction(
 }
 
 /**
+ * Build an unsigned transaction to transfer vesting rights to a new address.
+ * Only the current recipient may authorize this call.
+ * The contract does not gate this behind pause flags.
+ *
+ * Event note: VestingTransferred emits (new_address, old_index) in the payload;
+ * the schedule index at the new address is not included until the contract is updated.
+ */
+export async function buildTransferVestingRightsTransaction(
+  contractId: string,
+  from: string,
+  to: string,
+  index: number,
+  network: 'testnet' | 'mainnet',
+  publicKey: string,
+): Promise<string> {
+  const contract = new Contract(contractId);
+  const operation = contract.call(
+    'transfer_vesting_rights',
+    new Address(from).toScVal(),
+    nativeToScVal(BigInt(index), { type: 'u32' }),
+    new Address(to).toScVal(),
+  );
+
+  return buildSorobanTransaction(contractId, operation, network, publicKey);
+}
+
+/**
  * Build an unsigned transaction to bump a specific vesting schedule TTL.
  */
 export async function buildBumpVestingTtlTransaction(

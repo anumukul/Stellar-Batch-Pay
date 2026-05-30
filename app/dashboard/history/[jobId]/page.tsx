@@ -23,7 +23,7 @@
 import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { motion } from "framer-motion";
+import { MotionSafe } from "@/components/motion-safe";
 import { ArrowLeft, Copy, ExternalLink, Download, FileText, Loader2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -141,7 +141,7 @@ export default function BatchDetailPage({
   const exportRows = data ? buildBatchExportRows(data) : [];
 
   return (
-    <motion.div
+    <MotionSafe
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
@@ -330,7 +330,7 @@ export default function BatchDetailPage({
           </CardContent>
         </Card>
       )}
-    </motion.div>
+    </MotionSafe>
   );
 }
 

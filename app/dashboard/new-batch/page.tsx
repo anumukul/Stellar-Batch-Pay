@@ -11,7 +11,13 @@ import { JobProgress } from "@/components/job-progress";
 import { ResultsDisplay } from "@/components/results-display";
 import { useWallet } from "@/contexts/WalletContext";
 import { parsePaymentFile, getBatchSummary } from "@/lib/stellar";
-import type { ParsedPaymentFile, BatchResult, JobStatus, PaymentInstruction } from "@/lib/stellar/types";
+import type {
+  ParsedPaymentFile,
+  BatchResult,
+  JobStatus,
+  PaymentInstruction,
+  BatchMetaEntry,
+} from "@/lib/stellar/types";
 import { Send, Info, Lightbulb, Check, AlertCircle, BookOpen, UserPlus, FileUp } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ManualBatchEntry } from "@/components/dashboard/ManualBatchEntry";
@@ -121,8 +127,43 @@ export default function NewBatchPaymentPage() {
   useEffect(() => () => stopPolling(), [stopPolling]);
   const [skippedIndices, setSkippedIndices] = useState<number[]>([]);
   const [convertedIndices, setConvertedIndices] = useState<number[]>([]);
+  const [batchMeta, setBatchMeta] = useState<BatchMetaEntry[] | undefined>();
+  const [batchMetaLoading, setBatchMetaLoading] = useState(false);
   const { publicKey, signTx } = useWallet();
   const allowServerSigning = process.env.NEXT_PUBLIC_ALLOW_SERVER_SIGNING === "true";
+
+  const loadBatchMeta = useCallback(
+    async (payments: PaymentInstruction[]) => {
+      if (!publicKey || payments.length === 0) {
+        setBatchMeta(undefined);
+        return;
+      }
+
+      setBatchMetaLoading(true);
+      try {
+        const response = await fetch("/api/batch-build", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            payments,
+            network: selectedNetwork,
+            publicKey,
+          }),
+        });
+        const data = await response.json();
+        if (response.ok) {
+          setBatchMeta(data.batchMeta);
+        } else {
+          setBatchMeta(undefined);
+        }
+      } catch {
+        setBatchMeta(undefined);
+      } finally {
+        setBatchMetaLoading(false);
+      }
+    },
+    [publicKey, selectedNetwork],
+  );
 
   const handleSkipToggle = (index: number) => {
     setSkippedIndices(prev => {
@@ -458,10 +499,13 @@ export default function NewBatchPaymentPage() {
                     </p>
                     <Button 
                       className="w-full bg-emerald-500 hover:bg-emerald-600 text-white"
-                      onClick={() => setStep(3)}
-                      disabled={summary.validCount === 0}
+                      onClick={async () => {
+                        await loadBatchMeta(validationResult.validPayments);
+                        setStep(3);
+                      }}
+                      disabled={summary.validCount === 0 || batchMetaLoading}
                     >
-                      Review Batch
+                      {batchMetaLoading ? "Estimating batch size..." : "Review Batch"}
                     </Button>
                   </CardContent>
                 </Card>
@@ -482,6 +526,7 @@ export default function NewBatchPaymentPage() {
             <BatchReview
               payments={validationResult.validPayments}
               network={selectedNetwork}
+              batchMeta={batchMeta}
               skippedIndices={skippedIndices}
               convertedIndices={convertedIndices}
               onSkipToggle={handleSkipToggle}

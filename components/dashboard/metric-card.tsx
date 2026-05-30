@@ -25,7 +25,7 @@ export function MetricCard({
   const isLiveIndicator = change === "Live"
 
   return (
-    <motion.div
+    <MotionSafe
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.1 }}
@@ -62,6 +62,6 @@ export function MetricCard({
           </div>
         </CardContent>
       </Card>
-    </motion.div>
+    </MotionSafe>
   )
 }

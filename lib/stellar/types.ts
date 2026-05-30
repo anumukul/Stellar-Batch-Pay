@@ -91,10 +91,16 @@ export interface BuildBatchConfig {
   publicKey: string;
 }
 
+export interface BatchMetaEntry {
+  ops: number;
+  estimatedBytes: number;
+}
+
 /** Result from the batch-build endpoint (unsigned XDRs) */
 export interface BuildBatchResult {
   xdrs: string[];
   batchCount: number;
+  batchMeta?: BatchMetaEntry[];
   network: "testnet" | "mainnet";
   publicKey: string;
 }

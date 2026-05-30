@@ -20,7 +20,11 @@ import {
 import { safeJsonResponse } from "@/lib/safe-json";
 import { horizonUrl } from "@/lib/stellar/network-config";
 
-import { createBatches, parseAsset } from "@/lib/stellar/batcher";
+import {
+  createBatches,
+  estimateBatchTransactionSize,
+  parseAsset,
+} from "@/lib/stellar/batcher";
 import {
   validatePaymentInstruction,
   validatePaymentInstructions,
@@ -119,14 +123,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Await the batches properly (was causing 'length' error)
-    const batches = await createBatches(payments, MAX_OPS, { network });
+    const dynamicFee = await getRecommendedFee(server);
+
+    const batches = await createBatches(payments, MAX_OPS, {
+      network,
+      server,
+    });
+
+    const batchMeta = batches.map((batch) => ({
+      ops: batch.payments.length,
+      estimatedBytes: estimateBatchTransactionSize(
+        batch.payments,
+        network,
+        dynamicFee,
+      ),
+    }));
 
     const networkPassphrase =
       network === "testnet" ? Networks.TESTNET : Networks.PUBLIC;
-
-    // Fetch dynamic fee from Horizon using fee service
-    const dynamicFee = await getRecommendedFee(server);
 
     const xdrs: string[] = [];
 
@@ -182,6 +196,7 @@ export async function POST(request: NextRequest) {
     return setRateLimitHeaders(safeJsonResponse({
       xdrs,
       batchCount: batches.length,
+      batchMeta,
       network,
       publicKey,
     }), rate);
