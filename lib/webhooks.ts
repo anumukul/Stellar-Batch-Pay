@@ -66,9 +66,32 @@ export function registerWebhook(url: string, events: string[], secret?: string):
 }
 
 export function verifyWebhookSignature(payload: string, secret: string, signature: string): boolean {
+  // #332: Validate signature format before timing-safe comparison.
+  // timingSafeEqual throws if buffers have different lengths; gracefully
+  // reject malformed input to avoid 500 errors and DoS on bad client signatures.
+  if (!signature || signature.length === 0) {
+    return false;
+  }
+
+  // Validate hex format: must be even length (hex pairs)
+  if (signature.length % 2 !== 0) {
+    return false;
+  }
+
+  // Validate characters are hex digits
+  if (!/^[0-9a-fA-F]*$/.test(signature)) {
+    return false;
+  }
+
   const expectedSignature = crypto.createHmac('sha256', secret)
     .update(payload)
     .digest('hex');
+
+  // Length check before timingSafeEqual to prevent throws
+  if (signature.length !== expectedSignature.length) {
+    return false;
+  }
+
   return crypto.timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expectedSignature, 'hex'));
 }
 
