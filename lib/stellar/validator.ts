@@ -12,6 +12,7 @@ import {
   BalancesMap,
   BalanceValidationResult,
 } from "./types";
+import { parseStellarAmount } from "./utils";
 
 function isValidPublicKey(value: string): boolean {
   return StrKey.isValidEd25519PublicKey(value);
@@ -91,8 +92,16 @@ export function validatePaymentInstruction(instruction: PaymentInstruction): {
   }
 
   // Check if amount is a valid number
-  const amount = parseFloat(instruction.amount);
-  if (isNaN(amount) || amount <= 0) {
+  let parsedAmount;
+  try {
+    parsedAmount = parseStellarAmount(instruction.amount);
+  } catch {
+    return {
+      valid: false,
+      error: `Invalid amount: must be a positive number (got ${instruction.amount})`,
+    };
+  }
+  if (parsedAmount.lte(0)) {
     return {
       valid: false,
       error: `Invalid amount: must be a positive number (got ${instruction.amount})`,

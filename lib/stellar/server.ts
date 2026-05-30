@@ -26,6 +26,8 @@ import {
   validateBatchConfig,
 } from "./validator";
 import { getRecommendedFee } from "./fee-service";
+import Big from "big.js";
+import { parseStellarAmount, formatStellarAmount } from "./utils";
 
 /**
  * Utility to parse asset input into a StellarAsset instance
@@ -92,7 +94,7 @@ export class StellarService {
       );
 
       let txCount = 0;
-      let totalAmount = "0";
+      let totalAmountBig = new Big(0);
 
       for (const batch of batches) {
         try {
@@ -158,7 +160,7 @@ export class StellarService {
               }),
             );
 
-            totalAmount = String(Number(totalAmount) + Number(payment.amount));
+            totalAmountBig = totalAmountBig.plus(parseStellarAmount(payment.amount));
 
             // Add a placeholder result (status updated after submission)
             results.push({
@@ -204,7 +206,7 @@ export class StellarService {
       return {
         batchId: `batch-${Date.now()}`,
         totalRecipients: instructions.length,
-        totalAmount,
+        totalAmount: formatStellarAmount(totalAmountBig),
         totalTransactions: txCount,
         results,
         summary: {

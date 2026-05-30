@@ -10,6 +10,7 @@ import { updateJob } from "../job-store";
 import { createBatches } from "./batcher";
 import type { PaymentInstruction, BatchResult, PaymentResult } from "./types";
 import { Horizon, TransactionBuilder } from "stellar-sdk";
+import { sumStellarAmounts, formatStellarAmount } from "./utils";
 
 /**
  * Process a batch job in the background. This function must NOT be awaited
@@ -108,7 +109,7 @@ export async function processJobInBackground(
           batchId: `batch-${Date.now()}`,
           totalRecipients: payments.length > 0 ? payments.length : signedTransactions.length,
           totalAmount: payments.length > 0
-            ? payments.reduce((sum, p) => sum + parseFloat(p.amount), 0).toString()
+            ? formatStellarAmount(sumStellarAmounts(payments.map(p => p.amount)))
             : "0",
           totalTransactions: signedTransactions.length,
           network,
@@ -168,15 +169,12 @@ export async function processJobInBackground(
       updateJob(jobId, { completedBatches: i + 1 });
     }
 
-    const totalAmount = payments.reduce(
-      (sum, p) => sum + parseFloat(p.amount),
-      0,
-    );
+    const totalAmount = formatStellarAmount(sumStellarAmounts(payments.map(p => p.amount)));
 
     const finalResult: BatchResult = {
       batchId: jobId,
       totalRecipients: payments.length,
-      totalAmount: totalAmount.toString(),
+      totalAmount: totalAmount,
       totalTransactions: batches.length,
       network,
       timestamp: startTime,
