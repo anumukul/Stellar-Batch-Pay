@@ -1,7 +1,13 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   typescript: {
-    ignoreBuildErrors: true,
+    ignoreBuildErrors: false,
   },
   images: {
     unoptimized: true,
@@ -14,11 +20,10 @@ const nextConfig = {
     };
     return config;
   },
-  experimental: {
-    turbo: {
-      resolveAlias: {
-        "@stellar/freighter-api": "@stellar/freighter-api/build/index.min.js",
-      },
+  turbopack: {
+    root: __dirname,
+    resolveAlias: {
+      "@stellar/freighter-api": "@stellar/freighter-api/build/index.min.js",
     },
   },
 }

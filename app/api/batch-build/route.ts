@@ -31,7 +31,7 @@ import {
   buildBalancesMap,
   validateBalances,
 } from "@/lib/stellar/validator";
-import type { PaymentInstruction } from "@/lib/stellar/types";
+import type { PaymentInstruction, HorizonBalance } from "@/lib/stellar/types";
 import { getRecommendedFee } from "@/lib/stellar/fee-service";
 import { MAX_UPLOAD_ROWS } from "@/lib/stellar/parser";
 import { applyRateLimit, setRateLimitHeaders } from "@/lib/api-rate-limit";
@@ -109,7 +109,7 @@ export async function POST(request: NextRequest) {
 
     // Validate source account has sufficient balance for all assets
     const balancesMap = buildBalancesMap(
-      sourceAccount.balances as { asset_type: string; asset_code?: string; asset_issuer?: string; balance: string }[],
+      sourceAccount.balances as unknown as HorizonBalance[],
     );
     const balanceCheck = validateBalances(payments, balancesMap);
     if (!balanceCheck.all_sufficient) {
@@ -151,7 +151,7 @@ export async function POST(request: NextRequest) {
       // otherwise fall back to the system-generated tracking memo.
       // Stellar supports only one memo per transaction.
       const firstMemoPayment = batch.payments.find(p => p.memo);
-      let memo: ReturnType<typeof Memo.text>;
+      let memo: any;
       if (firstMemoPayment?.memo) {
         const memoType = firstMemoPayment.memoType ?? 'text';
         memo = memoType === 'id'

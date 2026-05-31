@@ -22,7 +22,7 @@ export interface UseStellarWalletReturn {
     isSep7ModalOpen: boolean;
     setSep7ModalOpen: (open: boolean) => void;
     // Ledger specific state
-    ledger: LedgerState;
+    ledger: ReturnType<typeof useLedger>;
     connectLedger: () => Promise<void>;
 }
 

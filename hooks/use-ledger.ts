@@ -52,9 +52,8 @@ export function useLedger() {
 
     const { default: StellarApp } = await import("@ledgerhq/hw-app-str");
 
-    try {
-      const transport = await getTransport();
-      const stellar = new StellarApp(transport);
+      const transport = await TransportWebUSB.create();
+      const stellar = new StellarApp(transport) as any;
 
       // Get app info to verify Stellar app is open
       const appInfo = await stellar.getAppInfo();
@@ -134,9 +133,8 @@ export function useLedger() {
     return runQueuedSign(async () => {
       const { default: StellarApp } = await import("@ledgerhq/hw-app-str");
 
-      try {
-        const transport = await getTransport();
-        const stellar = new StellarApp(transport);
+      const transport = await TransportWebUSB.create();
+      const stellar = new StellarApp(transport) as any;
 
         // Sign the transaction using Ledger. Chrome, Edge, and Opera are the
         // supported WebUSB browsers for Ledger signing.

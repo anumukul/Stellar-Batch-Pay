@@ -102,7 +102,7 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const retryJobId = createJob(failedPayments, job.network);
+        const retryJobId = createJob(failedPayments, job.network, job.publicKey || "");
         void processJobInBackground(retryJobId, failedPayments, job.network, secretKey);
 
         return safeJsonResponse(

@@ -18,13 +18,17 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 interface ManualBatchEntryProps {
+  initialPayments?: PaymentInstruction[];
   onPaymentsChange: (payments: PaymentInstruction[]) => void;
 }
 
-export function ManualBatchEntry({ onPaymentsChange }: ManualBatchEntryProps) {
-  const [rows, setRows] = useState<Partial<PaymentInstruction>[]>([
-    { address: "", amount: "", asset: "XLM" }
-  ]);
+export function ManualBatchEntry({ initialPayments, onPaymentsChange }: ManualBatchEntryProps) {
+  const [rows, setRows] = useState<Partial<PaymentInstruction>[]>(() => {
+    if (initialPayments && initialPayments.length > 0) {
+      return initialPayments;
+    }
+    return [{ address: "", amount: "", asset: "XLM" }];
+  });
   const { contacts } = useAddressBook();
   const [openPopoverIndex, setOpenPopoverIndex] = useState<number | null>(null);
 

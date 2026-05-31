@@ -88,7 +88,7 @@ export class StellarService {
           // otherwise fall back to the system-generated tracking memo.
           // Stellar supports only one memo per transaction.
           const firstMemoPayment = batch.payments.find(p => p.memo);
-          let memo: ReturnType<typeof Memo.text>;
+          let memo: any;
           if (firstMemoPayment?.memo) {
             const memoType = firstMemoPayment.memoType ?? 'text';
             memo = memoType === 'id'
