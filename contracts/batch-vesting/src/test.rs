@@ -2045,6 +2045,7 @@ fn test_get_vestings_pagination_overflow() {
         &1000,
         &2000,
         &0,
+        &0,
         &Vec::from_array(&env, [String::from_str(&env, "")])
     );
 
@@ -2075,6 +2076,7 @@ fn test_ttl_bumping() {
         &Vec::from_array(&env, [1000]),
         &1000,
         &2000,
+        &0,
         &0,
         &Vec::from_array(&env, [String::from_str(&env, "")])
     );
@@ -2149,6 +2151,7 @@ fn test_config_enforcement() {
         &amounts,
         &0,
         &2000,
+        &0,
         &0,
         &Vec::from_array(&env, [String::from_str(&env, ""), String::from_str(&env, ""), String::from_str(&env, "")])
     );
@@ -2237,6 +2240,7 @@ fn test_batch_revoke_out_of_order_indices() {
             &0,
             &end,
             &0,
+            &0,
             &Vec::from_array(&env, [String::from_str(&env, "")])
         );
     }
@@ -2299,6 +2303,7 @@ fn test_step_based_vesting() {
         &start_time,
         &end_time,
         &vesting_step,
+        &0,
         &Vec::from_array(&env, [String::from_str(&env, "step test")])
     );
 
@@ -2347,6 +2352,7 @@ fn test_invalid_vesting_step_divisibility() {
         &0,
         &1000,
         &300, // 1000 is not divisible by 300
+        &0,
         &Vec::from_array(&env, [String::from_str(&env, "")])
     );
 }
