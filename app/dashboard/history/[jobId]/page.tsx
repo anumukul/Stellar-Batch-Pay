@@ -1,62 +1,28 @@
 "use client";
 
-/**
- * Batch detail page (#368).
- *
- * Previously, the History page's "View Details" action opened the
- * raw `/api/batch-status/:jobId` JSON in a new tab — fine for an
- * engineer, intimidating for an operations user. This page formats
- * the same job into:
- *
- *   - A header card with job id, network, totals.
- *   - A per-recipient status table with each transaction hash linked
- *     to the appropriate Stellar explorer (testnet vs mainnet).
- *   - "Copy hash" + "Open on stellar.expert" actions per recipient.
- *   - "Export Results" (#311) buttons for CSV + printable HTML so
- *     accounting / payroll teams can pull records without leaving
- *     the dashboard.
- *
- * The URL is deep-linkable so support tickets can reference a
- * specific batch by job id.
- */
-
-import { use, useEffect, useState } from "react";
+import { use, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useWallet } from "@/contexts/WalletContext";
 import { MotionSafe } from "@/components/motion-safe";
+import { DashboardWalletEmpty } from "@/components/dashboard/dashboard-wallet-empty";
+import { pageEnter } from "@/lib/motion-tokens";
 import { ArrowLeft, Copy, ExternalLink, Download, FileText, Loader2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { useWallet } from "@/contexts/WalletContext";
 import {
   buildBatchExportRows,
   toBatchExportCsv,
   toBatchExportHtml,
 } from "@/lib/dashboard/batch-export";
-
-interface JobStatusResponse {
-  jobId: string;
-  status: "queued" | "processing" | "completed" | "failed";
-  network: "testnet" | "mainnet";
-  createdAt?: string;
-  completedAt?: string;
-  totalBatches?: number;
-  completedBatches?: number;
-  summary?: {
-    successful: number;
-    failed: number;
-  };
-  recipients?: Array<{
-    address: string;
-    amount: string;
-    asset: string;
-    status: "pending" | "success" | "failed";
-    transactionHash?: string;
-    error?: string;
-  }>;
-}
+import {
+  mapBatchStatusToDetailView,
+  type BatchDetailView,
+} from "@/lib/dashboard/batch-detail";
 
 function explorerUrl(hash: string, network: "testnet" | "mainnet"): string {
   const base =
@@ -76,6 +42,16 @@ function downloadFile(filename: string, contents: string, mime: string) {
   URL.revokeObjectURL(url);
 }
 
+async function fetchBatchDetail(jobId: string, publicKey: string): Promise<BatchDetailView> {
+  const params = new URLSearchParams({ publicKey });
+  const res = await fetch(`/api/batch-status/${jobId}?${params.toString()}`);
+  if (!res.ok) {
+    throw new Error(`Failed to load batch (HTTP ${res.status})`);
+  }
+  const body = await res.json();
+  return mapBatchStatusToDetailView(body);
+}
+
 export default function BatchDetailPage({
   params,
 }: {
@@ -83,38 +59,17 @@ export default function BatchDetailPage({
 }) {
   const { jobId } = use(params);
   const router = useRouter();
-  const [data, setData] = useState<JobStatusResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [retrying, setRetrying] = useState(false);
-  const [retryJobId, setRetryJobId] = useState<string | null>(null);
-  const [retryJobData, setRetryJobData] = useState<JobStatusResponse | null>(null);
-  const [retryPollError, setRetryPollError] = useState<string | null>(null);
-  const allowServerSigning = process.env.NEXT_PUBLIC_ALLOW_SERVER_SIGNING === "true";
   const { publicKey } = useWallet();
+  const [retrying, setRetrying] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      setLoading(true);
-      try {
-        const res = await fetch(`/api/batch-status/${jobId}`);
-        if (!res.ok) {
-          throw new Error(`Failed to load batch (HTTP ${res.status})`);
-        }
-        const body = (await res.json()) as JobStatusResponse;
-        if (!cancelled) setData(body);
-      } catch (e) {
-        if (!cancelled) setError((e as Error).message);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [jobId]);
+  const { data, error, isLoading } = useQuery({
+    queryKey: ["job", jobId, publicKey],
+    queryFn: () => fetchBatchDetail(jobId, publicKey!),
+    enabled: !!publicKey,
+    staleTime: 5 * 1000,
+    refetchInterval: (query) =>
+      query.state.data?.status === "completed" || query.state.data?.status === "failed" ? false : 5000,
+  });
 
   const handleRetry = async () => {
     if (!data?.summary?.failed) {
@@ -169,12 +124,7 @@ export default function BatchDetailPage({
   const exportRows = data ? buildBatchExportRows(data) : [];
 
   return (
-    <MotionSafe
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.25 }}
-      className="space-y-6"
-    >
+    <MotionSafe {...pageEnter} className="space-y-6">
       <Link
         href="/dashboard/history"
         className="inline-flex items-center gap-2 text-sm text-gray-400 hover:text-white"
@@ -211,15 +161,16 @@ export default function BatchDetailPage({
           </div>
         </CardHeader>
         <CardContent>
-          {loading && (
+          {isLoading && (
             <div className="flex items-center gap-2 text-gray-400">
               <Loader2 className="h-4 w-4 animate-spin" /> Loading job…
             </div>
           )}
-          {error && <p className="text-red-300">{error}</p>}
+          {!isLoading && !publicKey && <DashboardWalletEmpty className="border-none bg-transparent" />}
+          {error && <p className="text-red-300">{(error as Error).message}</p>}
           {data && (
             <div className="grid sm:grid-cols-3 gap-4 text-sm">
-              <Metric label="Recipients" value={data.recipients?.length ?? 0} />
+              <Metric label="Recipients" value={data.recipients.length} />
               <Metric
                 label="Successful"
                 value={data.summary?.successful ?? 0}
@@ -278,25 +229,14 @@ export default function BatchDetailPage({
                 Export CSV
               </Button>
               {data.summary?.failed ? (
-                allowServerSigning ? (
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={handleRetry}
-                    disabled={retrying}
-                  >
-                    {retrying ? "Retrying…" : `Retry ${data.summary.failed} Failed`}
-                  </Button>
-                ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled
-                    title="Server-side retry is disabled in client-signing-only deployments. Set ALLOW_SERVER_SIGNING=true to enable."
-                  >
-                    Retry disabled (client-signing only)
-                  </Button>
-                )
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleRetry}
+                  disabled={retrying}
+                >
+                  {retrying ? "Retrying…" : `Retry ${data.summary.failed} Failed`}
+                </Button>
               ) : null}
               <Button
                 variant="outline"
@@ -326,7 +266,7 @@ export default function BatchDetailPage({
                 </tr>
               </thead>
               <tbody>
-                {(data.recipients ?? []).map((r, i) => (
+                {data.recipients.map((r, i) => (
                   <tr key={`${r.address}-${i}`} className="border-b border-[#1F2937]/50">
                     <td className="py-3 pr-4 font-mono text-xs text-gray-300 break-all">
                       {r.address}

@@ -26,23 +26,11 @@ import {
   validateBatchConfig,
 } from "./validator";
 import { getRecommendedFee } from "./fee-service";
+import { isBadSequenceError } from "./submit-errors";
+import { horizonUrl } from "./network-config";
 import Big from "big.js";
-import { parseStellarAmount, formatStellarAmount } from "./utils";
-
-/**
- * Utility to parse asset input into a StellarAsset instance
- */
-export function parseAsset(asset: any): StellarAsset {
-  if (asset === "XLM" || asset === "native") {
-    return StellarAsset.native();
-  }
-
-  if (!asset.code || !asset.issuer) {
-    throw new Error("Invalid asset: must provide code and issuer");
-  }
-
-  return new StellarAsset(asset.code, asset.issuer);
-}
+import { parseStellarAmount, formatStellarAmount, parseAsset, truncateMemoToBytes } from "./utils";
+export { parseAsset };
 
 export class StellarService {
   private keypair: Keypair;
@@ -60,12 +48,7 @@ export class StellarService {
     this.network = config.network;
     this.maxOperationsPerTransaction = config.maxOperationsPerTransaction;
 
-    const serverUrl =
-      config.network === "testnet"
-        ? "https://horizon-testnet.stellar.org"
-        : "https://horizon.stellar.org";
-
-    this.server = new Horizon.Server(serverUrl);
+    this.server = new Horizon.Server(horizonUrl(config.network));
   }
 
   /**
@@ -79,7 +62,7 @@ export class StellarService {
 
     try {
       // Load source account
-      const sourceAccount = await this.server.loadAccount(
+      let sourceAccount = await this.server.loadAccount(
         this.keypair.publicKey(),
       );
 
@@ -102,15 +85,15 @@ export class StellarService {
           // otherwise fall back to the system-generated tracking memo.
           // Stellar supports only one memo per transaction.
           const firstMemoPayment = batch.payments.find(p => p.memo);
-          let memo: ReturnType<typeof Memo.text>;
+          let memo: any;
           if (firstMemoPayment?.memo) {
             const memoType = firstMemoPayment.memoType ?? 'text';
             memo = memoType === 'id'
               ? Memo.id(firstMemoPayment.memo)
-              : Memo.text(firstMemoPayment.memo);
+              : Memo.text(truncateMemoToBytes(firstMemoPayment.memo));
           } else {
             const memoId = `bp-${Date.now()}-${txCount}`;
-            memo = Memo.text(memoId.slice(0, 28));
+            memo = Memo.text(truncateMemoToBytes(memoId));
           }
 
           let builder = new TransactionBuilder(sourceAccount, {
@@ -132,6 +115,7 @@ export class StellarService {
                 status: "failed",
                 transactionHash: undefined,
                 error: validation.error,
+                rowIndex: payment.rowIndex,
               });
               continue;
             }
@@ -148,6 +132,7 @@ export class StellarService {
                 status: "failed",
                 transactionHash: undefined,
                 error: err instanceof Error ? err.message : "Invalid asset",
+                rowIndex: payment.rowIndex,
               });
               continue;
             }
@@ -169,6 +154,7 @@ export class StellarService {
               asset: payment.asset,
               status: "failed",
               transactionHash: undefined,
+              rowIndex: payment.rowIndex,
             });
           }
 
@@ -176,6 +162,7 @@ export class StellarService {
           const transaction = builder.setTimeout(300).build();
           transaction.sign(this.keypair);
           const result = await this.server.submitTransaction(transaction);
+          sourceAccount.incrementSequenceNumber();
 
           txCount++;
 
@@ -192,6 +179,10 @@ export class StellarService {
           }
         } catch (error) {
           // Mark batch results as failed if transaction fails
+          if (isBadSequenceError(error)) {
+            sourceAccount = await this.server.loadAccount(this.keypair.publicKey());
+          }
+
           for (const result of results) {
             if (result.status === "failed") {
               result.error =

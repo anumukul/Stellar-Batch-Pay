@@ -31,9 +31,10 @@ import {
   buildBalancesMap,
   validateBalances,
 } from "@/lib/stellar/validator";
-import type { PaymentInstruction } from "@/lib/stellar/types";
+import type { PaymentInstruction, HorizonBalance } from "@/lib/stellar/types";
 import { getRecommendedFee } from "@/lib/stellar/fee-service";
 import { MAX_UPLOAD_ROWS } from "@/lib/stellar/parser";
+import { truncateMemoToBytes } from "@/lib/stellar/utils";
 import { applyRateLimit, setRateLimitHeaders } from "@/lib/api-rate-limit";
 
 interface RequestBody {
@@ -109,9 +110,9 @@ export async function POST(request: NextRequest) {
 
     // Validate source account has sufficient balance for all assets
     const balancesMap = buildBalancesMap(
-      sourceAccount.balances as { asset_type: string; asset_code?: string; asset_issuer?: string; balance: string }[],
+      sourceAccount.balances as unknown as HorizonBalance[],
     );
-    const balanceCheck = validateBalances(payments, balancesMap);
+    const balanceCheck = validateBalances(payments, balancesMap, undefined, MAX_OPS);
     if (!balanceCheck.all_sufficient) {
       const insufficient = balanceCheck.checks
         .filter((c) => !c.sufficient)
@@ -143,6 +144,8 @@ export async function POST(request: NextRequest) {
       network === "testnet" ? Networks.TESTNET : Networks.PUBLIC;
 
     const xdrs: string[] = [];
+    // #396: collect indices of rows skipped due to per-row validation failure
+    const omittedRows: number[] = [];
 
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i];
@@ -151,15 +154,15 @@ export async function POST(request: NextRequest) {
       // otherwise fall back to the system-generated tracking memo.
       // Stellar supports only one memo per transaction.
       const firstMemoPayment = batch.payments.find(p => p.memo);
-      let memo: ReturnType<typeof Memo.text>;
+      let memo: any;
       if (firstMemoPayment?.memo) {
         const memoType = firstMemoPayment.memoType ?? 'text';
         memo = memoType === 'id'
           ? Memo.id(firstMemoPayment.memo)
-          : Memo.text(firstMemoPayment.memo);
+          : Memo.text(truncateMemoToBytes(firstMemoPayment.memo));
       } else {
         const memoId = `bp-${Date.now()}-${i}`;
-        memo = Memo.text(memoId.slice(0, 28));
+        memo = Memo.text(truncateMemoToBytes(memoId));
       }
 
       let builder = new TransactionBuilder(sourceAccount, {
@@ -169,7 +172,12 @@ export async function POST(request: NextRequest) {
 
       for (const payment of batch.payments) {
         const pv = validatePaymentInstruction(payment);
-        if (!pv.valid) continue;
+        if (!pv.valid) {
+          // #396: track omitted row indices instead of silently skipping
+          const originalIndex = payments.indexOf(payment);
+          omittedRows.push(originalIndex);
+          continue;
+        }
 
         const asset = parseAsset(payment.asset);
         const stellarAsset =
@@ -193,12 +201,28 @@ export async function POST(request: NextRequest) {
       sourceAccount.incrementSequenceNumber();
     }
 
+    // #396: if any rows were silently skipped, return 422 with the list of
+    // omitted row indices so callers are never surprised by a short XDR.
+    if (omittedRows.length > 0) {
+      return setRateLimitHeaders(
+        NextResponse.json(
+          {
+            error: "Some payment rows failed per-row validation and were omitted.",
+            omittedRows,
+          },
+          { status: 422 },
+        ),
+        rate,
+      );
+    }
+
     return setRateLimitHeaders(safeJsonResponse({
       xdrs,
       batchCount: batches.length,
       batchMeta,
       network,
       publicKey,
+      estimatedFees: ((dynamicFee * payments.length) / 10_000_000).toFixed(7) + " XLM",
     }), rate);
   } catch (error) {
     console.error("Batch build error:", error);
