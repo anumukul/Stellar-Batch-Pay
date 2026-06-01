@@ -12,7 +12,7 @@ import { CsvValidationErrors } from "@/components/csv-validation-errors";
 import { JobProgress } from "@/components/job-progress";
 // import { ResultsDisplay } from "@/components/results-display";
 import { useWallet } from "@/contexts/WalletContext";
-import { parsePaymentFile } from "@/lib/stellar/parser";
+import { parsePaymentFile, parseFileStream, StreamValidationResult } from "@/lib/stellar/parser";
 import { getBatchSummary } from "@/lib/stellar/summary";
 
 import type {
@@ -94,6 +94,8 @@ export default function NewBatchPaymentPage() {
   );
   const [entryMode, setEntryMode] = useState<"upload" | "manual">("upload");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [parsingProgress, setParsingProgress] = useState<number | null>(null);
+  const [isParsing, setIsParsing] = useState(false);
 
   // Sync state to sessionStorage to prevent data loss on render crashes
   useEffect(() => {
@@ -295,22 +297,114 @@ export default function NewBatchPaymentPage() {
   ) => {
     setFile(selectedFile);
     setFileFormat(format);
+    setIsParsing(true);
+    setParsingProgress(0);
 
     try {
-      const content = await selectedFile.text();
-      const parsed = parsePaymentFile(content, format);
-      setValidationResult(parsed);
-      setValidationError("");
+      if (format === "csv") {
+        // Use streaming parser for CSV files
+        parseFileStream(selectedFile, {
+          onProgress: (count) => {
+            setParsingProgress(count);
+          },
+          onComplete: (result: StreamValidationResult) => {
+            setIsParsing(false);
+            setParsingProgress(null);
 
-      // Calculate summary
-      const instructions = parsed.rows.map((r) => r.instruction);
-      const batchSummary = getBatchSummary(instructions);
-      setSummary(batchSummary);
+            // Convert StreamValidationResult to ParsedPaymentFile format
+            const addressIndices = new Map<string, number[]>();
+            result.payments.forEach((inst, idx) => {
+              if (inst.address) {
+                const indices = addressIndices.get(inst.address) || [];
+                indices.push(idx);
+                addressIndices.set(inst.address, indices);
+              }
+            });
 
-      toast.success("File parsed and validated successfully");
-      setStep(2);
+            // Create a map of row numbers to payments for quick lookup
+            const paymentMap = new Map<number, PaymentInstruction>();
+            result.payments.forEach((payment, index) => {
+              paymentMap.set(index + 2, payment); // index + 2 = row number (header is row 1)
+            });
+
+            // Determine the maximum row number from both payments and errors
+            const maxRow = Math.max(
+              ...result.payments.map((_, i) => i + 2),
+              ...result.errors.map(e => e.row)
+            );
+
+            const rows = [];
+            for (let rowNumber = 2; rowNumber <= maxRow; rowNumber++) {
+              const payment = paymentMap.get(rowNumber);
+              const streamError = result.errors.find(e => e.row === rowNumber);
+              
+              if (payment) {
+                const isDuplicate = (addressIndices.get(payment.address)?.length || 0) > 1;
+                rows.push({
+                  rowNumber,
+                  instruction: payment,
+                  valid: !streamError && !isDuplicate,
+                  isDuplicate,
+                  error: streamError?.message || (isDuplicate ? 'Duplicate recipient address' : undefined),
+                });
+              } else if (streamError) {
+                // Row had a parsing error and wasn't included in payments
+                rows.push({
+                  rowNumber,
+                  instruction: { address: '', amount: '', asset: '' },
+                  valid: false,
+                  isDuplicate: false,
+                  error: streamError.message,
+                });
+              }
+            }
+
+            const parsed: ParsedPaymentFile = {
+              rows,
+              validPayments: rows.filter(row => row.valid).map(row => row.instruction),
+              invalidCount: rows.filter(row => !row.valid).length,
+            };
+
+            setValidationResult(parsed);
+            setValidationError("");
+
+            // Calculate summary
+            const instructions = parsed.rows.map((r) => r.instruction);
+            const batchSummary = getBatchSummary(instructions);
+            setSummary(batchSummary);
+
+            toast.success("File parsed and validated successfully");
+            setStep(2);
+          },
+          onError: (error: Error) => {
+            setIsParsing(false);
+            setParsingProgress(null);
+            setValidationResult(null);
+            setSummary(null);
+            setValidationError(error.message);
+            toast.error(error.message);
+          },
+        });
+      } else {
+        // Use regular parser for JSON files
+        const content = await selectedFile.text();
+        const parsed = parsePaymentFile(content, format);
+        setValidationResult(parsed);
+        setValidationError("");
+
+        // Calculate summary
+        const instructions = parsed.rows.map((r) => r.instruction);
+        const batchSummary = getBatchSummary(instructions);
+        setSummary(batchSummary);
+
+        setIsParsing(false);
+        toast.success("File parsed and validated successfully");
+        setStep(2);
+      }
     } catch (error) {
       console.error("Failed to parse file:", error);
+      setIsParsing(false);
+      setParsingProgress(null);
       setValidationResult(null);
       setSummary(null);
       setValidationError(
@@ -444,8 +538,16 @@ export default function NewBatchPaymentPage() {
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <FileUpload onFileSelect={handleFileSelect} />
-                      {file && (
+                      <FileUpload onFileSelect={handleFileSelect} disabled={isParsing} />
+                      {isParsing && parsingProgress !== null && (
+                        <div className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-200">
+                          <div className="flex items-center gap-2">
+                            <div className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
+                            <span>Parsing CSV: {parsingProgress} rows processed...</span>
+                          </div>
+                        </div>
+                      )}
+                      {file && !isParsing && (
                         <div className="mt-4 text-sm text-slate-400">
                           Selected:
                           <span className="text-white font-medium">
