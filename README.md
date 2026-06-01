@@ -498,3 +498,25 @@ def verify_webhook(payload, signature, secret):
 ## License
 
 Open source and free to use.
+
+## SEO Configuration
+
+The application exposes:
+
+- `/robots.txt` via `app/robots.ts`
+- `/sitemap.xml` via `app/sitemap.ts`
+
+Configure the production site URL with:
+
+```env
+NEXT_PUBLIC_SITE_URL=https://your-domain.com
+```
+
+Marketing pages included in the sitemap:
+
+- /
+- /pricing
+- /about
+- /contact
+
+API and dashboard routes are excluded from crawler indexing through robots rules.
