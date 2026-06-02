@@ -12,9 +12,18 @@ import { CsvValidationErrors } from "@/components/csv-validation-errors";
 import { JobProgress } from "@/components/job-progress";
 import { ResultsDisplay } from "@/components/results-display";
 import { useWallet } from "@/contexts/WalletContext";
-import { parsePaymentFile, getBatchSummary } from "@/lib/stellar";
-import { validatePaymentInstructions } from "@/lib/stellar/validator";
+```ts
+import {
+  parsePaymentFile,
+  parseFileStream,
+  StreamValidationResult,
+  getBatchSummary,
+  validatePaymentInstructions,
+} from "@/lib/stellar";
+
 import type {
+```
+
   ParsedPaymentFile,
   BatchResult,
   JobStatus,
@@ -97,6 +106,8 @@ export default function NewBatchPaymentPage() {
   const [entryMode, setEntryMode] = useState<"upload" | "manual">("upload");
   const [manualCanContinue, setManualCanContinue] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [parsingProgress, setParsingProgress] = useState<number | null>(null);
+  const [isParsing, setIsParsing] = useState(false);
 
 export function NewBatchPaymentPageContent() {
   const {
@@ -150,17 +161,165 @@ export function NewBatchPaymentPageContent() {
     { id: 4, name: t("newBatch.stepSubmit") },
   ];
 
-  const estimatedFees = summary
-    ? (summary.validCount * 0.0001).toFixed(4)
-    : "0.0000";
+```ts
+const handleFileSelect = async (
+  selectedFile: File,
+  format: "json" | "csv",
+) => {
+  setFile(selectedFile);
+  setFileFormat(format);
+  setIsParsing(true);
+  setParsingProgress(0);
 
-  const canNavigateToStep = (targetStep: number): boolean => {
-    if (targetStep === step) return true;
-    if (targetStep === 1) return true;
-    if (targetStep === 2) return step >= 2 && !!validationResult;
-    if (targetStep === 3) return step >= 3 && !!validationResult;
-    if (targetStep === 4) return step >= 4;
-    return false;
+  try {
+    if (format === "csv") {
+      parseFileStream(selectedFile, {
+        onProgress: (count) => {
+          setParsingProgress(count);
+        },
+        onComplete: (result: StreamValidationResult) => {
+          setIsParsing(false);
+          setParsingProgress(null);
+
+          const addressIndices = new Map<string, number[]>();
+
+          result.payments.forEach((inst, idx) => {
+            if (inst.address) {
+              const indices = addressIndices.get(inst.address) || [];
+              indices.push(idx);
+              addressIndices.set(inst.address, indices);
+            }
+          });
+
+          const paymentMap = new Map<number, PaymentInstruction>();
+
+          result.payments.forEach((payment, index) => {
+            paymentMap.set(index + 2, payment);
+          });
+
+          const maxRow = Math.max(
+            ...result.payments.map((_, i) => i + 2),
+            ...result.errors.map((e) => e.row),
+          );
+
+          const rows = [];
+
+          for (let rowNumber = 2; rowNumber <= maxRow; rowNumber++) {
+            const payment = paymentMap.get(rowNumber);
+            const streamError = result.errors.find(
+              (e) => e.row === rowNumber,
+            );
+
+            if (payment) {
+              const isDuplicate =
+                (addressIndices.get(payment.address)?.length || 0) > 1;
+
+              rows.push({
+                rowNumber,
+                instruction: payment,
+                valid: !streamError && !isDuplicate,
+                isDuplicate,
+                error:
+                  streamError?.message ||
+                  (isDuplicate
+                    ? "Duplicate recipient address"
+                    : undefined),
+              });
+            } else if (streamError) {
+              rows.push({
+                rowNumber,
+                instruction: {
+                  address: "",
+                  amount: "",
+                  asset: "",
+                },
+                valid: false,
+                isDuplicate: false,
+                error: streamError.message,
+              });
+            }
+          }
+
+          const parsed: ParsedPaymentFile = {
+            rows,
+            validPayments: rows
+              .filter((row) => row.valid)
+              .map((row) => row.instruction),
+            invalidCount: rows.filter((row) => !row.valid).length,
+          };
+
+          setValidationResult(parsed);
+          setValidationError("");
+
+          const instructions = parsed.rows.map((r) => r.instruction);
+          const batchSummary = getBatchSummary(instructions);
+
+          setSummary(batchSummary);
+
+          toast.success("File parsed and validated successfully");
+          setStep(2);
+        },
+        onError: (error: Error) => {
+          setIsParsing(false);
+          setParsingProgress(null);
+          setValidationResult(null);
+          setSummary(null);
+          setValidationError(error.message);
+          toast.error(error.message);
+        },
+      });
+    } else {
+      const content = await selectedFile.text();
+      const parsed = parsePaymentFile(content, format);
+
+      setValidationResult(parsed);
+      setValidationError("");
+
+      const instructions = parsed.rows.map((r) => r.instruction);
+      const batchSummary = getBatchSummary(instructions);
+
+      setSummary(batchSummary);
+
+      setIsParsing(false);
+      toast.success("File parsed and validated successfully");
+      setStep(2);
+    }
+  } catch (error) {
+    console.error("Failed to parse file:", error);
+
+    setIsParsing(false);
+    setParsingProgress(null);
+    setValidationResult(null);
+    setSummary(null);
+
+    setValidationError(
+      error instanceof Error
+        ? error.message
+        : "Failed to parse payment file",
+    );
+
+    toast.error(
+      error instanceof Error
+        ? error.message
+        : "Failed to parse payment file",
+    );
+  }
+};
+
+const estimatedFees = summary
+  ? (summary.validCount * 0.0001).toFixed(4)
+  : "0.0000";
+
+const canNavigateToStep = (targetStep: number): boolean => {
+  if (targetStep === step) return true;
+  if (targetStep === 1) return true;
+  if (targetStep === 2) return step >= 2 && !!validationResult;
+  if (targetStep === 3) return step >= 3 && !!validationResult;
+  if (targetStep === 4) return step >= 4;
+  return false;
+};
+```
+
   };
 
   const handleStepClick = (targetStep: number) => {
@@ -272,8 +431,16 @@ export function NewBatchPaymentPageContent() {
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <FileUpload onFileSelect={handleFileSelect} />
-                      {file && (
+                      <FileUpload onFileSelect={handleFileSelect} disabled={isParsing} />
+                      {isParsing && parsingProgress !== null && (
+                        <div className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-200">
+                          <div className="flex items-center gap-2">
+                            <div className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
+                            <span>Parsing CSV: {parsingProgress} rows processed...</span>
+                          </div>
+                        </div>
+                      )}
+                      {file && !isParsing && (
                         <div className="mt-4 text-sm text-slate-400">
                           Selected:
                           <span className="text-white font-medium">
