@@ -2818,3 +2818,260 @@ fn test_batch_revoke_different_recipients_any_order() {
     assert_eq!(results.get(0).unwrap(), true);
     assert_eq!(results.get(1).unwrap(), true);
 }
+
+// ── #543: Fee asset whitelist tests ───────────────────────────────────────────
+
+/// Verify that set_fee_config no longer accepts fee_asset as a parameter.
+/// The fee asset is now controlled by the contract config, not fee_config.
+#[test]
+fn test_set_fee_config_uses_whitelisted_asset_from_config() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register_contract(None, BatchVestingContract);
+    let client = BatchVestingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    // Create two different token contracts
+    let (token_a, token_admin_a) = create_token_contract(&env, &Address::generate(&env));
+    let (token_b, token_admin_b) = create_token_contract(&env, &Address::generate(&env));
+
+    // Set admin
+    client.set_admin(&admin);
+
+    // Initialize config with token_a as the whitelisted fee asset
+    let config = Config {
+        max_batch_size: 100,
+        max_schedules_per_recipient: 10,
+        upgrade_timelock: 7 * 24 * 60 * 60,
+        fee_asset: token_a.address.clone(),
+    };
+    client.set_config(&admin, &config);
+
+    // Set fee config (no fee_asset parameter anymore)
+    client.set_fee_config(&admin, &100, &treasury);
+
+    // Mint tokens for fee payment
+    token_admin_a.mint(&sender, &1000);
+    token_admin_b.mint(&sender, &1000);
+
+    env.ledger().with_mut(|li| li.timestamp = 0);
+
+    // Deposit should succeed and collect fees in token_a (the whitelisted asset)
+    client.deposit(
+        &sender,
+        &Vec::from_array(&env, [token_a.address.clone()]),
+        &Vec::from_array(&env, [recipient.clone()]),
+        &Vec::from_array(&env, [100i128]),
+        &0,
+        &1000,
+        &0,
+        &0,
+        &Vec::from_array(&env, [String::from_str(&env, "")]),
+    );
+
+    // Verify fees were collected in token_a (whitelisted), not token_b
+    assert_eq!(token_a.balance(&treasury), 100); // 1 recipient * 100 fee
+    assert_eq!(token_a.balance(&sender), 900); // 1000 - 100 fee - 100 deposited
+    assert_eq!(token_b.balance(&treasury), 0); // No fees in token_b
+}
+
+/// Verify that deposit fails if sender doesn't have the whitelisted fee asset.
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #5)")]
+fn test_deposit_fails_without_whitelisted_fee_asset() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register_contract(None, BatchVestingContract);
+    let client = BatchVestingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let (token_a, token_admin_a) = create_token_contract(&env, &Address::generate(&env));
+    let (token_b, _) = create_token_contract(&env, &Address::generate(&env));
+
+    // Set admin and config with token_a as fee asset
+    client.set_admin(&admin);
+    let config = Config {
+        max_batch_size: 100,
+        max_schedules_per_recipient: 10,
+        upgrade_timelock: 7 * 24 * 60 * 60,
+        fee_asset: token_a.address.clone(),
+    };
+    client.set_config(&admin, &config);
+
+    // Set fee config
+    client.set_fee_config(&admin, &100, &Address::generate(&env));
+
+    // Mint only token_b to sender (not the whitelisted token_a)
+    token_admin_a.mint(&sender, &0); // No token_a
+    token_admin_b.mint(&sender, &1000); // Only token_b
+
+    env.ledger().with_mut(|li| li.timestamp = 0);
+
+    // Deposit with token_b should fail because fees require token_a
+    client.deposit(
+        &sender,
+        &Vec::from_array(&env, [token_b.address.clone()]),
+        &Vec::from_array(&env, [recipient.clone()]),
+        &Vec::from_array(&env, [100i128]),
+        &0,
+        &1000,
+        &0,
+        &0,
+        &Vec::from_array(&env, [String::from_str(&env, "")]),
+    );
+}
+
+/// Verify that fees are always collected in the whitelisted asset,
+/// regardless of which token is used for the vesting deposit.
+#[test]
+fn test_fees_collected_in_whitelisted_asset_not_deposit_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register_contract(None, BatchVestingContract);
+    let client = BatchVestingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let (token_xlm, token_admin_xlm) = create_token_contract(&env, &Address::generate(&env));
+    let (token_usdc, token_admin_usdc) = create_token_contract(&env, &Address::generate(&env));
+
+    // Set admin and config with XLM as fee asset
+    client.set_admin(&admin);
+    let config = Config {
+        max_batch_size: 100,
+        max_schedules_per_recipient: 10,
+        upgrade_timelock: 7 * 24 * 60 * 60,
+        fee_asset: token_xlm.address.clone(), // XLM is whitelisted
+    };
+    client.set_config(&admin, &config);
+
+    // Set fee config: 50 XLM per recipient
+    client.set_fee_config(&admin, &50, &treasury);
+
+    // Mint both tokens to sender
+    token_admin_xlm.mint(&sender, &1000);
+    token_admin_usdc.mint(&sender, &1000);
+
+    env.ledger().with_mut(|li| li.timestamp = 0);
+
+    // Deposit using USDC (not the fee asset)
+    client.deposit(
+        &sender,
+        &Vec::from_array(&env, [token_usdc.address.clone()]),
+        &Vec::from_array(&env, [recipient.clone()]),
+        &Vec::from_array(&env, [200i128]),
+        &0,
+        &1000,
+        &0,
+        &0,
+        &Vec::from_array(&env, [String::from_str(&env, "")]),
+    );
+
+    // Verify: fees collected in XLM (whitelisted), not USDC (deposit token)
+    assert_eq!(token_xlm.balance(&treasury), 50); // Fee in XLM
+    assert_eq!(token_xlm.balance(&sender), 950); // 1000 - 50 fee
+    assert_eq!(token_usdc.balance(&sender), 800); // 1000 - 200 deposited
+    assert_eq!(token_usdc.balance(&treasury), 0); // No USDC fees
+}
+
+/// Verify that FeeConfigUpdated event includes the whitelisted fee asset from config.
+#[test]
+fn test_fee_config_event_includes_whitelisted_asset() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register_contract(None, BatchVestingContract);
+    let client = BatchVestingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let (token_xlm, _) = create_token_contract(&env, &Address::generate(&env));
+    let treasury = Address::generate(&env);
+
+    // Set admin and config
+    client.set_admin(&admin);
+    let config = Config {
+        max_batch_size: 100,
+        max_schedules_per_recipient: 10,
+        upgrade_timelock: 7 * 24 * 60 * 60,
+        fee_asset: token_xlm.address.clone(),
+    };
+    client.set_config(&admin, &config);
+
+    // Set fee config
+    client.set_fee_config(&admin, &75, &treasury);
+
+    // Verify FeeConfigUpdated event contains the whitelisted fee asset
+    let events = env.events().all();
+    let fee_config_event = events.get(events.len() - 1).unwrap();
+    let event_topics = fee_config_event.1;
+    let topic: Symbol = event_topics.get(0).unwrap().try_into_val(&env).unwrap();
+    assert_eq!(topic, Symbol::new(&env, "FeeConfigUpdated"));
+
+    let event_data: (i128, Address, Address) = fee_config_event.2.try_into_val(&env).unwrap();
+    assert_eq!(event_data.0, 75i128); // fee_per_recipient
+    assert_eq!(event_data.1, treasury); // treasury
+    assert_eq!(event_data.2, token_xlm.address); // whitelisted fee_asset from config
+}
+
+/// Verify that zero fees work correctly with the whitelist system.
+#[test]
+fn test_zero_fees_with_whitelisted_asset() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register_contract(None, BatchVestingContract);
+    let client = BatchVestingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let (token, token_admin) = create_token_contract(&env, &Address::generate(&env));
+
+    // Set admin and config
+    client.set_admin(&admin);
+    let config = Config {
+        max_batch_size: 100,
+        max_schedules_per_recipient: 10,
+        upgrade_timelock: 7 * 24 * 60 * 60,
+        fee_asset: token.address.clone(),
+    };
+    client.set_config(&admin, &config);
+
+    // Set fee to 0 (disabled)
+    client.set_fee_config(&admin, &0, &Address::generate(&env));
+
+    token_admin.mint(&sender, &1000);
+
+    env.ledger().with_mut(|li| li.timestamp = 0);
+
+    // Deposit with zero fees should not transfer any fee tokens
+    client.deposit(
+        &sender,
+        &Vec::from_array(&env, [token.address.clone()]),
+        &Vec::from_array(&env, [recipient.clone()]),
+        &Vec::from_array(&env, [100i128]),
+        &0,
+        &1000,
+        &0,
+        &0,
+        &Vec::from_array(&env, [String::from_str(&env, "")]),
+    );
+
+    // All tokens should be in the contract (no fees deducted)
+    assert_eq!(token.balance(&sender), 900); // 1000 - 100 deposited
+    assert_eq!(token.balance(&contract_id), 100); // Only the deposited amount
+}
