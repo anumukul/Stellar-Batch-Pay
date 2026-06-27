@@ -155,6 +155,22 @@ export async function processJobInBackground(
       });
 
       logger.info({ requestId, jobId, status: finalStatus, summary: finalResult.summary }, "Background job processing finished (pre-signed mode)");
+
+      if (finalStatus === "completed") {
+        void triggerWebhooksWithRetry("batch.completed", {
+          jobId,
+          network,
+          batchId: finalResult.batchId,
+          summary: finalResult.summary,
+        }, jobId);
+      } else {
+        void triggerWebhooksWithRetry("batch.failed", {
+          jobId,
+          network,
+          batchId: finalResult.batchId,
+          summary: finalResult.summary,
+        }, jobId);
+      }
       return;
     }
 
@@ -244,6 +260,22 @@ export async function processJobInBackground(
     });
 
     logger.info({ requestId, jobId, status: finalStatus, summary: finalResult.summary }, "Background job processing finished (server-signed mode)");
+
+    if (finalStatus === "completed") {
+      void triggerWebhooksWithRetry("batch.completed", {
+        jobId,
+        network,
+        batchId: finalResult.batchId,
+        summary: finalResult.summary,
+      }, jobId);
+    } else {
+      void triggerWebhooksWithRetry("batch.failed", {
+        jobId,
+        network,
+        batchId: finalResult.batchId,
+        summary: finalResult.summary,
+      }, jobId);
+    }
   } catch (error) {
     logger.error({ requestId, jobId }, "Background worker encountered error", error);
     updateJob(jobId, {
