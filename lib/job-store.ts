@@ -305,18 +305,35 @@ export function getJob(jobId: string, publicKey?: string): JobState | undefined 
 }
 
 /**
- * Atomic DB-side increment for completedBatches to prevent read-modify-write conflicts.
+ * Atomic DB-side increment for completedBatches using optimistic version locking,
+ * consistent with updateJob. Retries up to 3 times on concurrent modification.
  */
 export function incrementCompletedBatches(jobId: string): void {
   const db = getDb();
-  const now = new Date().toISOString();
-  db.prepare(`
-    UPDATE jobs SET
-      completedBatches = completedBatches + 1,
-      updatedAt = ?,
-      version = version + 1
-    WHERE jobId = ?
-  `).run(now, jobId);
+  const maxAttempts = 3;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const row = db.prepare("SELECT version FROM jobs WHERE jobId = ?").get(jobId) as
+      | { version: number }
+      | undefined;
+    if (!row) return;
+
+    const now = new Date().toISOString();
+    const result = db.prepare(`
+      UPDATE jobs SET
+        completedBatches = completedBatches + 1,
+        updatedAt = ?,
+        version = version + 1
+      WHERE jobId = ? AND version = ?
+    `).run(now, jobId, row.version);
+
+    if (result.changes > 0) return;
+
+    // Version changed under us — retry unless last attempt
+    if (attempt === maxAttempts - 1) {
+      throw new Error(`incrementCompletedBatches: concurrent modification on job ${jobId}`);
+    }
+  }
 }
 
 /**
